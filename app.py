@@ -373,7 +373,7 @@ def extraer_manualmente_equipos_de_imagen(imagen):
             st.warning("No se han seleccionado partidos completos.")
     
     return []
-  def cargar_quiniela_desde_imagen_ocr():
+def cargar_quiniela_desde_imagen_ocr():
     """
     Versión mejorada: sube imagen, aplica preprocesamiento y extrae texto con OCR.
     """
