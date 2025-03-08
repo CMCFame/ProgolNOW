@@ -3,3 +3,6 @@ pillow
 pytesseract
 requests
 pytz
+pandas
+opencv-python
+numpy
