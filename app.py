@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 API_HOST = "free-api-live-football-data.p.rapidapi.com"
 LIVE_ENDPOINT = "/football-current-live"
 HISTORICAL_ENDPOINT = "/football-get-matches-by-date"
+POPULAR_LEAGUES_ENDPOINT = "/football-popular-leagues"
+
+# List of top leagues to filter
+TOP_LEAGUES = [
+    "Serie A", "Eredivisie", "La Liga", "Bundesliga", "Primeira Liga",
+    "Liga MX", "Liga Argentina", "Premier League", "Ligue 1",
+    "Liga de Ascenso MX", "Liga Femenil MX"
+]
 
 # Function to make API requests with debugging
 @st.cache_data(ttl=60)  # Cache the data for 60 seconds
@@ -54,8 +62,19 @@ def get_football_data(endpoint, date=None):
         logger.error(f"An error occurred: {e}")
         return None
 
+# Function to get popular leagues
+def get_popular_leagues():
+    data = get_football_data(POPULAR_LEAGUES_ENDPOINT)
+    if data:
+        return {league['name']: league['id'] for league in data.get("response", [])}
+    return {}
+
 # Streamlit app layout
 st.title("Football Data App")
+
+# Get popular leagues
+popular_leagues = get_popular_leagues()
+top_league_ids = {name: league_id for name, league_id in popular_leagues.items() if name in TOP_LEAGUES}
 
 # Display live football data
 st.header("Live Football Data")
@@ -64,14 +83,15 @@ if live_data:
     live_matches = live_data.get("response", {}).get("live", [])
     if live_matches:
         for match in live_matches:
-            with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Live)"):
-                st.write(f"**League ID**: {match.get('leagueId', 'N/A')}")
-                st.write(f"**Time**: {match.get('time', 'N/A')}")
-                st.write(f"**Score**: {match['home'].get('score', 'N/A')} - {match['away'].get('score', 'N/A')}")
-                status = match.get('status', {})
-                st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
-                st.write(f"**Live Time**: {status.get('liveTime', {}).get('long', 'N/A')}")
-                st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
+            if match['leagueId'] in top_league_ids.values():
+                with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Live)"):
+                    st.write(f"**League**: {match.get('leagueName', 'N/A')}")
+                    st.write(f"**Time**: {match.get('time', 'N/A')}")
+                    st.write(f"**Score**: {match['home'].get('score', 'N/A')} - {match['away'].get('score', 'N/A')}")
+                    status = match.get('status', {})
+                    st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
+                    st.write(f"**Live Time**: {status.get('liveTime', {}).get('long', 'N/A')}")
+                    st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
     else:
         st.write("No live matches available.")
 else:
@@ -85,13 +105,14 @@ if historical_data:
     historical_matches = historical_data.get("response", {}).get("matches", [])
     if historical_matches:
         for match in historical_matches:
-            with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Historical)"):
-                st.write(f"**League ID**: {match.get('leagueId', 'N/A')}")
-                st.write(f"**Time**: {match.get('time', 'N/A')}")
-                st.write(f"**Score**: {match['home'].get('score', 'N/A')} - {match['away'].get('score', 'N/A')}")
-                status = match.get('status', {})
-                st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
-                st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
+            if match['leagueId'] in top_league_ids.values():
+                with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Historical)"):
+                    st.write(f"**League**: {match.get('leagueName', 'N/A')}")
+                    st.write(f"**Time**: {match.get('time', 'N/A')}")
+                    st.write(f"**Score**: {match['home'].get('score', 'N/A')} - {match['away'].get('score', 'N/A')}")
+                    status = match.get('status', {})
+                    st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
+                    st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
     else:
         st.write("No historical matches available.")
 else:
