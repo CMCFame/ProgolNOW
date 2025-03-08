@@ -56,6 +56,7 @@ def get_football_data(endpoint, date=None):
         logger.info(f"Response Status Code: {res.status}")
         logger.info(f"Response Headers: {res.getheaders()}")
         logger.info(f"Response Content: {data.decode('utf-8')}")
+        st.write(f"Response Content: {data.decode('utf-8')}")  # Debug print
 
         if res.status == 200:
             return json.loads(data)
@@ -87,6 +88,7 @@ st.title("Football Data App")
 # Get popular leagues
 popular_leagues = get_popular_leagues()
 top_league_ids = {name: league_id for name, league_id in popular_leagues.items() if name in TOP_LEAGUES}
+st.write("Top League IDs:", top_league_ids)  # Debug print
 
 # Display live football data
 st.header("Live Football Data")
@@ -95,6 +97,7 @@ if live_data:
     live_matches = live_data.get("response", {}).get("live", [])
     if live_matches:
         for match in live_matches:
+            st.write(f"Match: {match}")  # Debug print
             if match['leagueId'] in top_league_ids.values():
                 with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Live)"):
                     st.write(f"**League**: {match.get('leagueName', 'N/A')}")
