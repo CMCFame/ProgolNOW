@@ -1,139 +1,91 @@
 import streamlit as st
-import http.client
-import json
-import logging
+import requests
 from datetime import datetime, timedelta
 
+# Constants
 API_HOST = "free-api-live-football-data.p.rapidapi.com"
-LIVE_ENDPOINT = "/football-current-live"
-HISTORICAL_ENDPOINT = "/football-get-matches-by-date"
-POPULAR_LEAGUES_ENDPOINT = "/football-popular-leagues"
 
-TOP_LEAGUES = [
-    "Premier League",
-    "Champions League",
-    "LaLiga",
-    "Bundesliga",
-    "Europa League",
-    "Ligue 1",
-    "Serie A",
-    "Copa del Rey",
-    "FA Cup"
-]
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@st.cache_data(ttl=60)
-def fetch_football_data(endpoint, date=None):
-    """Fetch data from the football API. No Streamlit UI calls in here."""
-    try:
-        api_key = st.secrets["rapidapi"]["api_key"]
-    except KeyError:
-        logger.error("API key not found in secrets.")
+def get_live_matches():
+    """Fetch current live matches from the RapidAPI endpoint."""
+    url = f"https://{API_HOST}/football-current-live"
+    headers = {
+        "x-rapidapi-key": st.secrets["rapidapi"]["api_key"],  # Load from secrets
+        "x-rapidapi-host": API_HOST
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        st.error(f"Live Matches Request Failed: {response.status_code}")
         return None
     
-    conn = http.client.HTTPSConnection(API_HOST)
+    return response.json()
+
+def get_matches_by_date(date_str):
+    """
+    Fetch matches for a given date (e.g. '20241107') 
+    from the RapidAPI endpoint.
+    """
+    url = f"https://{API_HOST}/football-get-matches-by-date"
     headers = {
-        'x-rapidapi-key': api_key,
-        'x-rapidapi-host': API_HOST
+        "x-rapidapi-key": st.secrets["rapidapi"]["api_key"],
+        "x-rapidapi-host": API_HOST
     }
-    logger.info(f"Request Headers: {headers}")
-
-    if date:
-        endpoint += f"?date={date}"
-
-    try:
-        conn.request("GET", endpoint, headers=headers)
-        res = conn.getresponse()
-        data = res.read()
-
-        logger.info(f"Response Status Code: {res.status}")
-        logger.info(f"Response Headers: {res.getheaders()}")
-        logger.info(f"Response Content: {data.decode('utf-8')}")
-
-        if res.status == 200:
-            return json.loads(data)
-        else:
-            logger.error(f"Error: {res.status} - {data.decode('utf-8')}")
-            return None
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
+    params = {"date": date_str}
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        st.error(f"Historical Matches Request Failed ({date_str}): {response.status_code}")
         return None
+    
+    return response.json()
 
-def get_popular_leagues():
-    data = fetch_football_data(POPULAR_LEAGUES_ENDPOINT)
-    if not data:
-        return {}
-    leagues_dict = {}
-    for league in data.get("response", {}).get("popular", []):
-        # example: "Premier League": 123
-        leagues_dict[league['name']] = league['id']
-    return leagues_dict
+# ------------------- Streamlit App Layout --------------------
+st.title("Live & Historical Football Matches")
 
-st.title("Football Data App")
-
-# 1. Popular Leagues
-st.subheader("Fetching Popular Leagues")
-popular_leagues = get_popular_leagues()
-if not popular_leagues:
-    st.error("Failed to retrieve popular leagues.")
-else:
-    st.write("Leagues fetched. For debugging, here they are:")
-    st.write(popular_leagues)
-
-# Filter top leagues by name
-top_league_ids = {name: league_id 
-                  for name, league_id in popular_leagues.items()
-                  if name in TOP_LEAGUES}
-st.write("Top League IDs:", top_league_ids)
-
-# 2. Live Football Data
-st.header("Live Football Data")
-live_data = fetch_football_data(LIVE_ENDPOINT)
-if not live_data:
-    st.error("No live data available or failed to fetch.")
-else:
+# ---- Live Matches ----
+st.header("Live Matches")
+live_data = get_live_matches()
+if live_data:
     live_matches = live_data.get("response", {}).get("live", [])
-    if not live_matches:
-        st.write("No live matches available.")
-    else:
+    if live_matches:
         for match in live_matches:
-            # Show only matches from top leagues:
-            if match['leagueId'] in top_league_ids.values():
-                home_name = match['home']['name']
-                away_name = match['away']['name']
-                with st.expander(f"{home_name} vs {away_name} (Live)"):
-                    st.write(f"**League**: {match.get('leagueName', 'N/A')}")
-                    st.write(f"**Time**: {match.get('time', 'N/A')}")
-                    home_score = match['home'].get('score', 'N/A')
-                    away_score = match['away'].get('score', 'N/A')
-                    st.write(f"**Score**: {home_score} - {away_score}")
-                    status = match.get('status', {})
-                    st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
-                    st.write(f"**Live Time**: {status.get('liveTime', {}).get('long', 'N/A')}")
-                    st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
+            home_team = match["home"]["name"]
+            away_team = match["away"]["name"]
+            home_score = match["home"].get("score", "N/A")
+            away_score = match["away"].get("score", "N/A")
+            time_info = match.get("time", "N/A")
+            status_info = match.get("status", {})
 
-# 3. Historical Football Data
-st.header("Historical Football Data (Past 24 Hours)")
-yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")  # check API format
-historical_data = fetch_football_data(HISTORICAL_ENDPOINT, date=yesterday)
-if not historical_data:
-    st.error("No historical data available or failed to fetch.")
-else:
-    historical_matches = historical_data.get("response", {}).get("matches", [])
-    if not historical_matches:
-        st.write("No historical matches available.")
+            with st.expander(f"{home_team} vs {away_team} — Live Scoreboard"):
+                st.write(f"**Time**: {time_info}")
+                st.write(f"**Score**: {home_score} - {away_score}")
+                st.write(f"**Status**: {status_info.get('scoreStr', 'N/A')}")
+                st.write(f"**Live Time**: {status_info.get('liveTime', {}).get('long', 'N/A')}")
     else:
-        for match in historical_matches:
-            if match['leagueId'] in top_league_ids.values():
-                with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Historical)"):
-                    st.write(f"**League**: {match.get('leagueName', 'N/A')}")
-                    st.write(f"**Time**: {match.get('time', 'N/A')}")
-                    home_score = match['home'].get('score', 'N/A')
-                    away_score = match['away'].get('score', 'N/A')
+        st.write("No ongoing matches at the moment.")
+
+# ---- Historical Matches (past 3 days) ----
+st.header("Historical Matches (Past 3 Days)")
+today = datetime.now()
+for i in range(1, 4):
+    date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
+    st.subheader(f"Matches on {date_str}")
+
+    hist_data = get_matches_by_date(date_str)
+    if hist_data:
+        hist_matches = hist_data.get("response", {}).get("matches", [])
+        if hist_matches:
+            for match in hist_matches:
+                home_team = match["home"]["name"]
+                away_team = match["away"]["name"]
+                home_score = match["home"].get("score", "N/A")
+                away_score = match["away"].get("score", "N/A")
+                time_info = match.get("time", "N/A")
+                status_info = match.get("status", {})
+
+                with st.expander(f"{home_team} vs {away_team} — Past Match"):
+                    st.write(f"**Time**: {time_info}")
                     st.write(f"**Score**: {home_score} - {away_score}")
-                    status = match.get('status', {})
-                    st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
-                    st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
+                    st.write(f"**Status**: {status_info.get('scoreStr', 'N/A')}")
+        else:
+            st.write("No matches found for this date.")
+    else:
+        st.write("No data returned for this date.")
