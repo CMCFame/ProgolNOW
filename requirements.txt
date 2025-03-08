@@ -2,9 +2,4 @@ streamlit
 pillow
 pytesseract
 requests
-python-dotenv
-opencv-python-headless
-PyMuPDF
-PyPDF2
-pyyaml
 pytz

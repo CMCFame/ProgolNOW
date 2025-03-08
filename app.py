@@ -6,25 +6,26 @@ import requests
 import time
 from io import BytesIO
 from PIL import Image
+import pytesseract
 import pytz
 import datetime
 
-# Ejemplo de cómo leer la key desde streamlit secrets.
-# Debes crear un archivo 'secrets.toml' (sin comillas) con el siguiente contenido:
-#
-# [rapidapi]
-# key = "TU_API_KEY_DE_RAPIDAPI"
-# host = "free-api-live-football-data.p.rapidapi.com"
-#
-# O bien, guardar estos valores desde el "Secrets" manager de Streamlit Cloud.
+# Si necesitases señalar la ruta de tesseract (p.e. en Windows local), podrías usar:
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# En Streamlit Cloud, con 'tesseract-ocr' instalado, no hace falta.
 
 ##############################
-# HEADER: MÓDULO DE CONFIGURACIÓN
+# HEADER: MÓDULO DE CONFIGURACIÓN (API, ZONA HORARIA)
 ##############################
 def cargar_credenciales_api():
     """
-    Carga las credenciales de la API desde los secretos de Streamlit.
-    Retorna un dict con la clave y el host.
+    Carga credenciales de la API desde la sección [rapidapi] en 'Secrets' de Streamlit.
+    En Streamlit Cloud: 
+    - Menu -> Settings -> Secrets
+    - Define la estructura:
+        [rapidapi]
+        key = "TU_API_KEY"
+        host = "free-api-live-football-data.p.rapidapi.com"
     """
     api_key = st.secrets["rapidapi"]["key"]
     api_host = st.secrets["rapidapi"]["host"]
@@ -36,71 +37,71 @@ def cargar_credenciales_api():
 
 def configurar_zona_horaria():
     """
-    Retorna un objeto de zona horaria (pytz) de acuerdo a la selección del usuario en la app.
-    Por defecto, se asume la zona horaria local del sistema o la elegida por el usuario.
+    Retorna la zona horaria según la selección del usuario. 
     """
-    # Puedes cambiar la lista de zonas horarias según tu preferencia.
     lista_zonas = ["UTC", "America/Mexico_City", "America/Bogota", "Europe/Madrid"]
     seleccion = st.sidebar.selectbox("Selecciona tu Zona Horaria", lista_zonas, index=0)
     return pytz.timezone(seleccion)
 
 ##############################
-# HEADER: MÓDULO DE CARGA DE QUINIELA
+# HEADER: MÓDULO DE OCR Y PARSEO
 ##############################
-def cargar_quiniela_desde_imagen():
+def procesar_texto_quiniela(texto_detectado):
     """
-    Permite subir una imagen con la quiniela y procesarla (versión simulada).
-    Idealmente, aquí podrías hacer uso de OCR para extraer los datos de los partidos.
+    Ejemplo mínimo de parseo:
+    Busca líneas que contengan la palabra 'vs' (indiferente a mayúsculas).
+    Ajusta según la manera en que Tesseract reconozca el texto de tu quiniela.
     """
-    st.subheader("Carga tu quiniela desde una imagen")
-    imagen_cargada = st.file_uploader("Subir imagen de la quiniela", type=["png", "jpg", "jpeg"])
+    partidos_extraidos = []
+    lineas = texto_detectado.split("\n")
+    
+    for linea in lineas:
+        linea_limpia = linea.strip()
+        if not linea_limpia:
+            continue
+        
+        # Ejemplo: detectamos la palabra "vs" (o "VS")
+        if " vs " in linea_limpia.lower():
+            partidos_extraidos.append(linea_limpia)
+    
+    return partidos_extraidos
+
+def cargar_quiniela_desde_imagen_ocr():
+    """
+    Único método de carga: sube imagen y extrae texto con OCR.
+    """
+    st.header("Subir Imagen de Quiniela (OCR)")
+    imagen_cargada = st.file_uploader("Arrastra o selecciona tu imagen (png/jpg/jpeg)", type=["png", "jpg", "jpeg"])
     
     if imagen_cargada is not None:
-        # Mostramos la imagen para confirmación
+        # Mostramos la imagen
         img = Image.open(BytesIO(imagen_cargada.read()))
         st.image(img, caption="Quiniela cargada", use_column_width=True)
         
-        # Procesamiento OCR (simulado)
-        st.write("Procesando la imagen...")
-        time.sleep(1)
-        st.success("Imagen procesada (ejemplo). Aquí se extraerían los partidos reconocidos.")
-        return ["Partido 1: Equipo A vs Equipo B", "Partido 2: Equipo C vs Equipo D"]
-    return []
-
-def cargar_quiniela_manual():
-    """
-    Permite al usuario introducir manualmente la lista de partidos de su quiniela.
-    Esta función regresa una lista de strings con los partidos ingresados.
-    """
-    st.subheader("Carga manual de quiniela")
-    
-    num_partidos = st.number_input("¿Cuántos partidos quieres ingresar?", min_value=1, max_value=20, value=3)
-    partidos = []
-    for i in range(int(num_partidos)):
-        partido = st.text_input(f"Ingrese descripción del partido #{i+1}", f"Ej: EquipoX vs EquipoY")
-        if partido:
-            partidos.append(partido)
-    
-    if st.button("Guardar quiniela manual"):
-        st.success("Quiniela guardada manualmente.")
-        return partidos
-    return []
-
-def cargar_quiniela_desde_web():
-    """
-    Carga la quiniela desde una URL externa (simulación).
-    En un caso real, llamarías a la web de Progol o sitios similares para extraer los datos.
-    """
-    st.subheader("Cargar quiniela desde web")
-    url_quiniela = st.text_input("Ingresa la URL de la quiniela", "https://alegrialoteria.com/Progol")
-    
-    if st.button("Cargar datos"):
-        st.write(f"Conectando a {url_quiniela}...")
-        # Aquí iría la lógica real para extraer los datos de la quiniela.
-        time.sleep(1)
-        st.success("Quiniela cargada desde la web (simulada).")
-        # Simulamos una lista de partidos
-        return ["Partido WEB 1: Equipo A vs Equipo B", "Partido WEB 2: Equipo C vs Equipo D"]
+        st.write("Procesando la imagen con OCR, por favor espera...")
+        with st.spinner("Extrayendo texto..."):
+            # Ajusta lang según el idioma que necesites; si tu imagen está en español:
+            # texto_detectado = pytesseract.image_to_string(img, lang='spa')
+            texto_detectado = pytesseract.image_to_string(img, lang='eng')
+            
+            # Mostramos el resultado crudo del OCR
+            st.write("**Texto detectado (OCR):**")
+            st.write(texto_detectado)
+            
+            # Parseamos el texto (ejemplo muy básico)
+            partidos_ocr = procesar_texto_quiniela(texto_detectado)
+            if partidos_ocr:
+                st.success(f"Se detectaron {len(partidos_ocr)} partidos con la palabra 'vs'.")
+                for p in partidos_ocr:
+                    st.write("-", p)
+                
+                # Retornamos la lista
+                return partidos_ocr
+            else:
+                st.warning("No se detectaron partidos con la lógica actual (búsqueda de 'vs').")
+                return []
+    else:
+        st.info("Por favor, sube una imagen en la parte superior.")
     return []
 
 ##############################
@@ -108,36 +109,33 @@ def cargar_quiniela_desde_web():
 ##############################
 def mostrar_partidos_quiniela(partidos, timezone):
     """
-    Muestra en pantalla la lista de partidos y sus horarios ajustados a la zona horaria.
-    Esta función recibe la zona horaria para convertir la hora de cada partido (simulada).
+    Muestra en pantalla la lista de partidos y una hora simulada por cada uno.
     """
-    st.subheader("Lista de partidos de la quiniela")
-    
+    st.header("Partidos detectados")
     if not partidos:
         st.info("Aún no hay partidos cargados.")
         return
     
-    # Ejemplo de hora simulada
     hora_base = datetime.datetime.utcnow()
+    st.write("**Lista de Partidos:**")
     
-    st.write("**Partidos Cargados:**")
     for i, partido in enumerate(partidos, 1):
-        # Simulamos fecha/hora
-        hora_local = hora_base.replace(hour=hora_base.hour + i)  # Simple offset
+        # offset mínimo para mostrar ejemplo de fecha/hora
+        hora_local = hora_base.replace(hour=(hora_base.hour + i) % 24)
         hora_convertida = hora_local.astimezone(timezone)
-        st.write(f"**{partido}** | {hora_convertida.strftime('%d-%m-%Y %H:%M %Z')}")
+        st.write(f"{i}. {partido} | {hora_convertida.strftime('%d-%m-%Y %H:%M %Z')}")
 
 ##############################
 # HEADER: MÓDULO DE RESULTADOS EN TIEMPO REAL
 ##############################
 def obtener_datos_en_tiempo_real():
     """
-    Ejemplo de llamada a la API de RapidAPI para obtener datos en tiempo real.
-    Se usa la búsqueda de jugadores como ejemplo, pero podrías consultar endpoints de partidos.
+    Ejemplo: Llamada a la API de RapidAPI (búsqueda de jugadores).
+    Ajusta con tu propio endpoint de partidos en tiempo real.
     """
     creds = cargar_credenciales_api()
     url = "https://free-api-live-football-data.p.rapidapi.com/football-players-search"
-    querystring = {"search":"m"}  # Ejemplo: buscar jugadores que contengan la letra 'm'
+    querystring = {"search": "m"}
     
     headers = {
         "x-rapidapi-key": creds["key"],
@@ -151,63 +149,50 @@ def obtener_datos_en_tiempo_real():
         return {}
 
 def mostrar_resultados_tiempo_real():
-    st.subheader("Resultados en tiempo real (Ejemplo con RapidAPI)")
+    st.header("Resultados en tiempo real (Ejemplo RapidAPI)")
+    st.write("Pulsa el botón para consultar datos (ejemplo de jugadores con 'm'):")
     
     if st.button("Actualizar resultados"):
         data = obtener_datos_en_tiempo_real()
         if data:
-            st.write("Datos recibidos de la API:")
+            st.write("**Respuesta de la API:**")
             st.json(data)
         else:
-            st.warning("No se pudieron obtener datos de la API.")
+            st.warning("No se obtuvieron datos de la API.")
     else:
-        st.info("Haz clic en 'Actualizar resultados' para obtener datos en tiempo real de la API.")
+        st.info("Presiona el botón para obtener datos en tiempo real.")
 
 ##############################
 # HEADER: MAIN DE LA APLICACIÓN
 ##############################
 def main():
-    st.title("Aplicación de Quinielas de Fútbol")
+    st.title("Quinielas con OCR (100% en Streamlit Cloud)")
     st.markdown("""
-        Esta aplicación permite a los usuarios dar seguimiento a sus quinielas deportivas,
-        enfocada principalmente en quinielas de fútbol (ej. Progol). 
-        Puedes cargar tu quiniela por diferentes medios y ver resultados en tiempo real.
+        **Uso**:  
+        1. Ve a "Cargar Quiniela (OCR)".  
+        2. Sube la imagen de tu quiniela.  
+        3. Observa el texto detectado y los partidos extraídos.  
+        4. Luego, opcionalmente, revisa "Ver Partidos" o "Resultados en Vivo".
     """)
 
-    # Configuramos la zona horaria elegida por el usuario
+    # Configuramos la zona horaria
     timezone = configurar_zona_horaria()
     
-    # Sidebar con opciones de navegación
-    menu = st.sidebar.radio("Navega por la aplicación", ["Inicio", "Cargar Quiniela", "Ver Partidos", "Resultados en Vivo"])
-    
-    # Estado en sesión para almacenar los partidos cargados
+    # Mantenemos la lista de partidos en el estado de sesión
     if "partidos_quiniela" not in st.session_state:
         st.session_state.partidos_quiniela = []
     
-    if menu == "Inicio":
-        st.write("Bienvenido. Selecciona una opción en el menú lateral para comenzar.")
+    # Menú de navegación
+    menu = st.sidebar.radio("Menú", ["Inicio", "Cargar Quiniela (OCR)", "Ver Partidos", "Resultados en Vivo"])
     
-    elif menu == "Cargar Quiniela":
-        # Carga desde imagen
-        partidos_imagen = cargar_quiniela_desde_imagen()
-        if partidos_imagen:
-            st.session_state.partidos_quiniela.extend(partidos_imagen)
-        
-        # Separador visual
-        st.write("---")
-        
-        # Carga manual
-        partidos_manuales = cargar_quiniela_manual()
-        if partidos_manuales:
-            st.session_state.partidos_quiniela.extend(partidos_manuales)
-        
-        # Separador visual
-        st.write("---")
-        
-        # Carga desde Web
-        partidos_web = cargar_quiniela_desde_web()
-        if partidos_web:
-            st.session_state.partidos_quiniela.extend(partidos_web)
+    if menu == "Inicio":
+        st.write("Selecciona una opción en el menú para comenzar.")
+    
+    elif menu == "Cargar Quiniela (OCR)":
+        # Único método de carga
+        partidos_ocr = cargar_quiniela_desde_imagen_ocr()
+        if partidos_ocr:
+            st.session_state.partidos_quiniela = partidos_ocr
     
     elif menu == "Ver Partidos":
         mostrar_partidos_quiniela(st.session_state.partidos_quiniela, timezone)
