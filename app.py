@@ -812,10 +812,13 @@ def mostrar_partidos_quiniela(partidos, timezone):
 ##############################
 # HEADER: MÓDULO DE RESULTADOS EN TIEMPO REAL
 ##############################
+##############################
+# HEADER: MÓDULO DE RESULTADOS EN TIEMPO REAL
+##############################
 def obtener_datos_en_tiempo_real(partidos_quiniela=None):
     """
-    Obtiene resultados actualizados de partidos.
-    En una aplicación real, consultaría una API de fútbol.
+    Obtiene resultados actualizados de partidos desde RapidAPI.
+    Usa el endpoint de resultados por fecha.
     
     Args:
         partidos_quiniela (list): Lista de partidos para los que buscar resultados
@@ -823,71 +826,223 @@ def obtener_datos_en_tiempo_real(partidos_quiniela=None):
     Returns:
         dict: Diccionario con resultados actualizados
     """
-    # En producción, aquí iría la conexión a la API real
     try:
+        # Obtener credenciales desde Streamlit Secrets
         creds = cargar_credenciales_api()
         
-        # Simular respuesta de API
-        resultados_simulados = {
-            "PUEBLA vs PUMAS": {"estado": "no iniciado", "resultado": "", "gol_local": 0, "gol_visitante": 0},
-            "C. AZUL vs MONTERREY": {"estado": "no iniciado", "resultado": "", "gol_local": 0, "gol_visitante": 0},
-            "GUADALAJARA vs AGUILAS": {"estado": "finalizado", "resultado": "3-1", "gol_local": 3, "gol_visitante": 1},
-            "BRIGHTON vs FULHAM": {"estado": "finalizado", "resultado": "2-0", "gol_local": 2, "gol_visitante": 0},
-            "BRENTFORD vs ASTON VILLA": {"estado": "no iniciado", "resultado": "", "gol_local": 0, "gol_visitante": 0},
-            "TOTTENHAM vs BOURNEMOUTH": {"estado": "en juego", "resultado": "1-0", "gol_local": 1, "gol_visitante": 0},
-            "PARMA vs TORINO": {"estado": "finalizado", "resultado": "1-1", "gol_local": 1, "gol_visitante": 1},
-            "JUVENTUS vs ATALANTA": {"estado": "en juego", "resultado": "2-1", "gol_local": 2, "gol_visitante": 1}
+        if not creds["key"] or not creds["host"]:
+            st.warning("No se encontraron credenciales de API. Usando datos simulados.")
+            return generar_resultados_simulados(partidos_quiniela)
+        
+        # Obtener fecha actual en formato YYYYMMDD
+        fecha_hoy = datetime.datetime.now().strftime("%Y%m%d")
+        
+        # Endpoint para obtener partidos por fecha
+        url = f"https://{creds['host']}/football-get-matches-by-date"
+        params = {"date": fecha_hoy}
+        headers = {
+            "x-rapidapi-key": creds["key"],
+            "x-rapidapi-host": creds["host"]
         }
         
-        # Si hay API configurada, intentar obtener datos reales (en producción)
-        if creds["key"] and creds["host"]:
-            # Este es solo un ejemplo de cómo sería:
-            url = f"https://{creds['host']}/api/v1/football/matches/live"
-            headers = {
-                "x-rapidapi-key": creds["key"],
-                "x-rapidapi-host": creds["host"]
-            }
+        try:
+            # Realizar la solicitud a la API
+            response = requests.get(url, headers=headers, params=params)
             
-            # Ejemplo: no ejecutar realmente en esta simulación
-            # response = requests.get(url, headers=headers)
-            # if response.status_code == 200:
-            #     return response.json()
+            if response.status_code == 200:
+                # Procesar los datos de la API
+                partidos_api = response.json()
+                
+                # En este punto, necesitamos mapear los datos de la API a nuestro formato interno
+                # El formato exacto dependerá de la respuesta de la API
+                resultados_procesados = procesar_resultados_api(partidos_api, partidos_quiniela)
+                
+                if resultados_procesados:
+                    return resultados_procesados
+                else:
+                    st.info("No se encontraron partidos correspondientes a tu quiniela en los datos de la API.")
+                    return generar_resultados_simulados(partidos_quiniela)
+            else:
+                st.warning(f"Error al consultar la API: {response.status_code}")
+                st.info("Usando datos simulados como alternativa.")
+                return generar_resultados_simulados(partidos_quiniela)
+                
+        except Exception as e:
+            st.warning(f"Error en la comunicación con la API: {str(e)}")
+            st.info("Usando datos simulados como alternativa.")
+            return generar_resultados_simulados(partidos_quiniela)
+    
+    except Exception as e:
+        st.error(f"Error general: {str(e)}")
+        return {}
+
+def procesar_resultados_api(datos_api, partidos_quiniela):
+    """
+    Procesa los datos recibidos de la API y los convierte al formato
+    utilizado por la aplicación.
+    
+    Args:
+        datos_api (dict): Datos recibidos de la API
+        partidos_quiniela (list): Lista de partidos en la quiniela
         
-        # Aleatoriamente actualizar algunos resultados para simular cambios
-        import random
+    Returns:
+        dict: Diccionario con los resultados en el formato interno
+    """
+    resultados = {}
+    
+    try:
+        # Verificar si hay datos válidos
+        if not datos_api or not isinstance(datos_api, dict) or "data" not in datos_api:
+            return {}
         
-        # Si hay partidos específicos de la quiniela, actualizamos algunos
+        # Normalizar partidos de la quiniela para facilitar la búsqueda
+        partidos_normalizados = {}
         if partidos_quiniela:
             for partido in partidos_quiniela:
-                partido_upper = partido.strip().upper()
-                
-                # Solo actualizar algunos aleatoriamente (20% de probabilidad)
-                if partido_upper in resultados_simulados and random.random() < 0.2:
-                    estado = resultados_simulados[partido_upper]["estado"]
+                partes = partido.strip().upper().split(" VS ")
+                if len(partes) >= 2:
+                    equipo_local = partes[0].strip()
+                    equipo_visitante = partes[1].strip()
                     
-                    # Si está en juego, actualizar el marcador
-                    if estado == "en juego":
-                        # 50% de probabilidad de que haya un gol nuevo
-                        if random.random() < 0.5:
-                            equipo = random.choice(["local", "visitante"])
-                            resultados_simulados[partido_upper][f"gol_{equipo}"] += 1
-                            gol_local = resultados_simulados[partido_upper]["gol_local"]
-                            gol_visitante = resultados_simulados[partido_upper]["gol_visitante"]
-                            resultados_simulados[partido_upper]["resultado"] = f"{gol_local}-{gol_visitante}"
-                    
-                    # Algunos partidos que no han iniciado, pasan a estar en juego
-                    elif estado == "no iniciado" and random.random() < 0.3:
-                        resultados_simulados[partido_upper]["estado"] = "en juego"
-                        resultados_simulados[partido_upper]["resultado"] = "0-0"
-                    
-                    # Algunos partidos en juego finalizan
-                    elif estado == "en juego" and random.random() < 0.2:
-                        resultados_simulados[partido_upper]["estado"] = "finalizado"
+                    # Crear clave normalizada para búsqueda
+                    clave_normal = f"{equipo_local} VS {equipo_visitante}"
+                    partidos_normalizados[clave_normal] = partido
         
-        return resultados_simulados
+        # Procesar cada partido de la API
+        for partido_data in datos_api.get("data", []):
+            # Extraer información relevante
+            try:
+                equipo_local = partido_data.get("team_1", {}).get("name", "").strip().upper()
+                equipo_visitante = partido_data.get("team_2", {}).get("name", "").strip().upper()
+                
+                # Si no hay nombres de equipos, continuar con el siguiente
+                if not equipo_local or not equipo_visitante:
+                    continue
+                
+                # Crear clave de búsqueda
+                clave_busqueda = f"{equipo_local} VS {equipo_visitante}"
+                
+                # Verificar si este partido está en nuestra quiniela
+                partido_original = None
+                for clave_quiniela, partido_q in partidos_normalizados.items():
+                    # Comparación flexible para permitir variaciones en los nombres
+                    if equipo_local in clave_quiniela and equipo_visitante in clave_quiniela:
+                        partido_original = partido_q
+                        break
+                
+                if not partido_original and not partidos_quiniela:
+                    # Si no hay partidos específicos, incluir todos
+                    partido_original = f"{equipo_local} vs {equipo_visitante}"
+                
+                if partido_original:
+                    # Determinar estado del partido
+                    estado_partido = partido_data.get("status", "").lower()
+                    
+                    if "finished" in estado_partido or "completed" in estado_partido:
+                        estado = "finalizado"
+                    elif "live" in estado_partido or "in progress" in estado_partido:
+                        estado = "en juego"
+                    else:
+                        estado = "no iniciado"
+                    
+                    # Obtener marcador
+                    gol_local = int(partido_data.get("score_1", 0))
+                    gol_visitante = int(partido_data.get("score_2", 0))
+                    
+                    # Guardar resultado en formato interno
+                    resultados[partido_original.upper()] = {
+                        "estado": estado,
+                        "resultado": f"{gol_local}-{gol_visitante}",
+                        "gol_local": gol_local,
+                        "gol_visitante": gol_visitante
+                    }
+            except Exception as e:
+                # Continuar con el siguiente partido si hay error
+                st.warning(f"Error al procesar partido: {str(e)}")
+                continue
+        
+        return resultados
+    
     except Exception as e:
-        st.error(f"Error al obtener datos: {str(e)}")
+        st.error(f"Error al procesar datos de la API: {str(e)}")
         return {}
+
+def generar_resultados_simulados(partidos_quiniela=None):
+    """
+    Genera resultados simulados para cuando la API no esté disponible.
+    
+    Args:
+        partidos_quiniela (list): Lista de partidos en la quiniela
+        
+    Returns:
+        dict: Diccionario con resultados simulados
+    """
+    # Base de resultados simulados
+    resultados_base = {
+        "PUEBLA vs PUMAS": {"estado": "no iniciado", "resultado": "", "gol_local": 0, "gol_visitante": 0},
+        "C. AZUL vs MONTERREY": {"estado": "no iniciado", "resultado": "", "gol_local": 0, "gol_visitante": 0},
+        "GUADALAJARA vs AGUILAS": {"estado": "finalizado", "resultado": "3-1", "gol_local": 3, "gol_visitante": 1},
+        "BRIGHTON vs FULHAM": {"estado": "finalizado", "resultado": "2-0", "gol_local": 2, "gol_visitante": 0},
+        "BRENTFORD vs ASTON VILLA": {"estado": "no iniciado", "resultado": "", "gol_local": 0, "gol_visitante": 0},
+        "TOTTENHAM vs BOURNEMOUTH": {"estado": "en juego", "resultado": "1-0", "gol_local": 1, "gol_visitante": 0},
+        "PARMA vs TORINO": {"estado": "finalizado", "resultado": "1-1", "gol_local": 1, "gol_visitante": 1},
+        "JUVENTUS vs ATALANTA": {"estado": "en juego", "resultado": "2-1", "gol_local": 2, "gol_visitante": 1}
+    }
+    
+    # Si no hay partidos específicos, retornar los resultados base
+    if not partidos_quiniela:
+        return resultados_base
+    
+    # Para los partidos específicos, asegurarse de que existan en el diccionario
+    resultados = {}
+    import random
+    
+    for partido in partidos_quiniela:
+        partido_upper = partido.strip().upper()
+        
+        if partido_upper in resultados_base:
+            # Usar datos base si existen
+            resultados[partido_upper] = resultados_base[partido_upper].copy()
+        else:
+            # Generar aleatoriamente para partidos nuevos
+            estado_rand = random.choice(["no iniciado", "en juego", "finalizado"])
+            
+            if estado_rand == "no iniciado":
+                resultados[partido_upper] = {
+                    "estado": "no iniciado", 
+                    "resultado": "", 
+                    "gol_local": 0, 
+                    "gol_visitante": 0
+                }
+            elif estado_rand == "en juego":
+                gol_local = random.randint(0, 3)
+                gol_visitante = random.randint(0, 3)
+                resultados[partido_upper] = {
+                    "estado": "en juego", 
+                    "resultado": f"{gol_local}-{gol_visitante}", 
+                    "gol_local": gol_local, 
+                    "gol_visitante": gol_visitante
+                }
+            else:
+                gol_local = random.randint(0, 4)
+                gol_visitante = random.randint(0, 4)
+                resultados[partido_upper] = {
+                    "estado": "finalizado", 
+                    "resultado": f"{gol_local}-{gol_visitante}", 
+                    "gol_local": gol_local, 
+                    "gol_visitante": gol_visitante
+                }
+    
+    # Aplicar algunas actualizaciones aleatorias si hay partidos en juego
+    for partido_upper, datos in resultados.items():
+        if datos["estado"] == "en juego" and random.random() < 0.3:
+            equipo = random.choice(["local", "visitante"])
+            resultados[partido_upper][f"gol_{equipo}"] += 1
+            gol_local = resultados[partido_upper]["gol_local"]
+            gol_visitante = resultados[partido_upper]["gol_visitante"]
+            resultados[partido_upper]["resultado"] = f"{gol_local}-{gol_visitante}"
+    
+    return resultados
 
 def mostrar_resultados_tiempo_real():
     st.header("Resultados en tiempo real")
@@ -914,7 +1069,8 @@ def mostrar_resultados_tiempo_real():
         # En una aplicación real, aquí usarías JavaScript para recargar periódicamente
     
     # Mostrar última actualización
-    st.write(f"**Última actualización:** {datetime.datetime.now(st.session_state.timezone).strftime('%d-%m-%Y %H:%M:%S %Z')}")
+    timezone = st.session_state.timezone if "timezone" in st.session_state else pytz.UTC
+    st.write(f"**Última actualización:** {datetime.datetime.now(timezone).strftime('%d-%m-%Y %H:%M:%S %Z')}")
     
     # Obtener datos actualizados
     if actualizar or auto_refresh:
@@ -927,17 +1083,17 @@ def mostrar_resultados_tiempo_real():
                 
                 # Mostramos los resultados en formato de tabla
                 datos_tabla = []
-                partidos_upper = [p.strip().upper() for p in partidos]
                 
-                for partido in partidos_upper:
+                for partido in partidos:
+                    partido_upper = partido.strip().upper()
                     # Separar equipos
-                    partes = partido.split(" vs ")
+                    partes = partido_upper.split(" VS ")
                     local = partes[0] if len(partes) > 0 else ""
                     visitante = partes[1] if len(partes) > 1 else ""
                     
                     # Buscar resultado
-                    if partido in resultados:
-                        res = resultados[partido]
+                    if partido_upper in resultados:
+                        res = resultados[partido_upper]
                         estado = res["estado"]
                         
                         if estado == "en juego":
@@ -965,12 +1121,13 @@ def mostrar_resultados_tiempo_real():
                 st.dataframe(df_resultados, use_container_width=True)
                 
                 # Mostrar partidos en progreso destacados
-                en_juego = [p for p in partidos_upper if p in resultados and resultados[p]["estado"] == "en juego"]
+                en_juego = [p for p in partidos if p.strip().upper() in resultados and resultados[p.strip().upper()]["estado"] == "en juego"]
                 if en_juego:
                     st.subheader("🔴 Partidos en progreso")
                     for partido in en_juego:
-                        res = resultados[partido]
-                        partes = partido.split(" vs ")
+                        partido_upper = partido.strip().upper()
+                        res = resultados[partido_upper]
+                        partes = partido_upper.split(" VS ")
                         local = partes[0] if len(partes) > 0 else ""
                         visitante = partes[1] if len(partes) > 1 else ""
                         
@@ -984,7 +1141,7 @@ def mostrar_resultados_tiempo_real():
                             st.write(f"### {visitante}")
                 
                 # Indicar cuántos partidos han finalizado
-                finalizados = len([p for p in partidos_upper if p in resultados and resultados[p]["estado"] == "finalizado"])
+                finalizados = len([p for p in partidos if p.strip().upper() in resultados and resultados[p.strip().upper()]["estado"] == "finalizado"])
                 total = len(partidos)
                 st.info(f"Han finalizado {finalizados} de {total} partidos.")
             else:
@@ -993,7 +1150,7 @@ def mostrar_resultados_tiempo_real():
         # Si hay resultados previos, mostrarlos
         if "resultados_actuales" in st.session_state:
             st.info("Mostrando última actualización de resultados.")
-            # Aquí repetiríamos el código para mostrar los resultados, pero por brevedad lo omitimos
+            # Mostrar resultados almacenados (podríamos repetir el código anterior)
         else:
             st.info("Presiona el botón para obtener datos en tiempo real.")
 ##############################
