@@ -82,7 +82,7 @@ def cargar_quiniela_desde_imagen_ocr():
         with st.spinner("Extrayendo texto..."):
             # Ajusta lang según el idioma que necesites; si tu imagen está en español:
             # texto_detectado = pytesseract.image_to_string(img, lang='spa')
-            texto_detectado = pytesseract.image_to_string(img, lang='eng')
+            texto_detectado = pytesseract.image_to_string(img, lang='spa')
             
             # Mostramos el resultado crudo del OCR
             st.write("**Texto detectado (OCR):**")
