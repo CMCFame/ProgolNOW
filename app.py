@@ -4,19 +4,32 @@ import requests
 # Set up the API endpoint
 API_ENDPOINT = "https://api-football-v1.p.rapidapi.com/v3/"
 
-# Function to make API requests
+# Function to make API requests with debugging
 def get_football_data(endpoint):
-    api_key = st.secrets["rapidapi"]["api_key"]
+    api_key = st.secrets.get("rapidapi", {}).get("api_key")
+    if not api_key:
+        st.error("API key not found in secrets.")
+        return None
+
     url = API_ENDPOINT + endpoint
     headers = {
         "X-RapidAPI-Key": api_key,
         "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
     }
+
+    st.write(f"Request URL: {url}")
+    st.write(f"Request Headers: {headers}")
+
     response = requests.get(url, headers=headers)
+    st.write(f"Response Status Code: {response.status_code}")
+    st.write(f"Response Headers: {response.headers}")
+    st.write(f"Response Content: {response.content}")
+
     if response.status_code == 200:
         return response.json()
     else:
         st.error(f"Error: {response.status_code}")
+        st.error(f"Response Text: {response.text}")
         return None
 
 # Streamlit app layout
