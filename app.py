@@ -10,12 +10,10 @@ from datetime import datetime, timedelta
 TARGET_LEAGUE_IDS = {
     # England
     47:  "Premier League",   # English Premier League
-    132: "FA Cup",
-
+    
     # Spain
     87:  "LaLiga",
-    138: "Copa del Rey",
-
+    
     # Germany
     54:  "Bundesliga",
 
@@ -30,12 +28,14 @@ TARGET_LEAGUE_IDS = {
     8976: "Liga de Expansión MX",
     9906: "Liga MX Femenil",
 
-    # Tournaments that don't appear in the big JSON because they're under UEFA
-    # Please replace ??? with the correct integer IDs once you have them.
-    # "Champions League"
-    ???: "Champions League", 
-    # "Europa League"
-    ???: "Europa League"
+    # Argentina
+    112:  "Liga Profesional",
+
+    # Portugal
+    61:  "Liga Portugal",
+
+    # Belgium
+    40:  "First Division A", 
 }
 
 API_HOST = "free-api-live-football-data.p.rapidapi.com"
