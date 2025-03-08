@@ -1040,7 +1040,7 @@ def main():
             # GIF o imagen ilustrativa (opcional)
             st.image("https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNjVlMDQyYWJlOGJiOTdhY2Q3ZTI4MWQzNDZlYzU3N2RiZDAyZWUwNyZlcD12MV9pbnRlcm5hbF9naWZzX2dpZklkJmN0PWc/HVr4gFqYIAJt6UmRdx/giphy.gif", 
                     caption="¡Carga tu quiniela para comenzar!")
-elif menu == "Cargar Quiniela (OCR)":
+    elif menu == "Cargar Quiniela (OCR)":
         # Único método de carga por OCR
         partidos_ocr = cargar_quiniela_desde_imagen_ocr()
         if partidos_ocr:
