@@ -16,9 +16,17 @@ POPULAR_LEAGUES_ENDPOINT = "/football-popular-leagues"
 
 # List of top leagues to filter
 TOP_LEAGUES = [
-    "Serie A", "Eredivisie", "La Liga", "Bundesliga", "Primeira Liga",
-    "Liga MX", "Liga Argentina", "Premier League", "Ligue 1",
-    "Liga de Ascenso MX", "Liga Femenil MX"
+    "Serie A",
+    "Eredivisie",
+    "LaLiga",
+    "Bundesliga",
+    "Primeira Liga",
+    "Liga MX",
+    "Liga Profesional",
+    "Premier League",
+    "Ligue 1",
+    "Liga de Ascenso MX",
+    "Liga Femenil MX"
 ]
 
 # Function to make API requests with debugging
@@ -66,12 +74,11 @@ def get_football_data(endpoint, date=None):
 def get_popular_leagues():
     data = get_football_data(POPULAR_LEAGUES_ENDPOINT)
     if data:
-        leagues = data.get("response", [])
-        if isinstance(leagues, list):
-            return {league.get('name'): league.get('id') for league in leagues}
-        else:
-            st.error("Unexpected data format for popular leagues.")
-            logger.error("Unexpected data format for popular leagues.")
+        leagues_dict = {}
+        for country in data.get("response", {}).get("leagues", []):
+            for league in country.get("leagues", []):
+                leagues_dict[league['name']] = league['id']
+        return leagues_dict
     return {}
 
 # Streamlit app layout
