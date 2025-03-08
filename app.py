@@ -14,19 +14,20 @@ LIVE_ENDPOINT = "/football-current-live"
 HISTORICAL_ENDPOINT = "/football-get-matches-by-date"
 POPULAR_LEAGUES_ENDPOINT = "/football-popular-leagues"
 
-# List of top leagues to filter
+# List of top leagues to filter (adjusted based on API response)
 TOP_LEAGUES = [
-    "Serie A",
-    "Eredivisie",
+    "Premier League",
+    "Champions League",
     "LaLiga",
     "Bundesliga",
-    "Primeira Liga",
-    "Liga MX",
-    "Liga Profesional",
-    "Premier League",
+    "Europa League",
     "Ligue 1",
-    "Liga de Ascenso MX",
-    "Liga Femenil MX"
+    "Serie A",
+    "Copa del Rey",
+    "FA Cup",
+    "Liga MX",
+    "Liga de Expansión MX",
+    "Liga MX Femenil"
 ]
 
 # Function to make API requests with debugging
@@ -76,9 +77,9 @@ def get_popular_leagues():
     data = get_football_data(POPULAR_LEAGUES_ENDPOINT)
     if data:
         leagues_dict = {}
-        for country in data.get("response", {}).get("leagues", []):
-            for league in country.get("leagues", []):
-                leagues_dict[league['name']] = league['id']
+        for league in data.get("response", {}).get("popular", []):
+            leagues_dict[league['name']] = league['id']
+            st.write(f"League: {league['name']}, ID: {league['id']}")  # Debug print
         return leagues_dict
     return {}
 
