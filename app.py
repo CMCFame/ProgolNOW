@@ -66,7 +66,12 @@ def get_football_data(endpoint, date=None):
 def get_popular_leagues():
     data = get_football_data(POPULAR_LEAGUES_ENDPOINT)
     if data:
-        return {league['name']: league['id'] for league in data.get("response", [])}
+        leagues = data.get("response", [])
+        if isinstance(leagues, list):
+            return {league.get('name'): league.get('id') for league in leagues}
+        else:
+            st.error("Unexpected data format for popular leagues.")
+            logger.error("Unexpected data format for popular leagues.")
     return {}
 
 # Streamlit app layout
