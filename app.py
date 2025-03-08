@@ -65,12 +65,13 @@ if live_data:
     if live_matches:
         for match in live_matches:
             with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Live)"):
-                st.write(f"**League ID**: {match['leagueId']}")
-                st.write(f"**Time**: {match['time']}")
-                st.write(f"**Score**: {match['home']['score']} - {match['away']['score']}")
-                st.write(f"**Status**: {match['status']['scoreStr']}")
-                st.write(f"**Live Time**: {match['status']['liveTime']['long']}")
-                st.write(f"**Tournament Stage**: {match['tournamentStage']}")
+                st.write(f"**League ID**: {match.get('leagueId', 'N/A')}")
+                st.write(f"**Time**: {match.get('time', 'N/A')}")
+                st.write(f"**Score**: {match['home'].get('score', 'N/A')} - {match['away'].get('score', 'N/A')}")
+                status = match.get('status', {})
+                st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
+                st.write(f"**Live Time**: {status.get('liveTime', {}).get('long', 'N/A')}")
+                st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
     else:
         st.write("No live matches available.")
 else:
@@ -85,11 +86,12 @@ if historical_data:
     if historical_matches:
         for match in historical_matches:
             with st.expander(f"{match['home']['name']} vs {match['away']['name']} (Historical)"):
-                st.write(f"**League ID**: {match['leagueId']}")
-                st.write(f"**Time**: {match['time']}")
-                st.write(f"**Score**: {match['home']['score']} - {match['away']['score']}")
-                st.write(f"**Status**: {match['status']['scoreStr']}")
-                st.write(f"**Tournament Stage**: {match['tournamentStage']}")
+                st.write(f"**League ID**: {match.get('leagueId', 'N/A')}")
+                st.write(f"**Time**: {match.get('time', 'N/A')}")
+                st.write(f"**Score**: {match['home'].get('score', 'N/A')} - {match['away'].get('score', 'N/A')}")
+                status = match.get('status', {})
+                st.write(f"**Status**: {status.get('scoreStr', 'N/A')}")
+                st.write(f"**Tournament Stage**: {match.get('tournamentStage', 'N/A')}")
     else:
         st.write("No historical matches available.")
 else:
