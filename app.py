@@ -24,10 +24,7 @@ TOP_LEAGUES = [
     "Ligue 1",
     "Serie A",
     "Copa del Rey",
-    "FA Cup",
-    "Liga MX",
-    "Liga de Expansión MX",
-    "Liga MX Femenil"
+    "FA Cup"
 ]
 
 # Function to make API requests with debugging
