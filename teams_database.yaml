@@ -1,0 +1,100 @@
+# Base de datos de equipos de fútbol con sus variaciones de nombre
+# Formato: clave_única: [Lista de variaciones de nombre]
+
+# Equipos de la Liga MX
+america: 
+  - América
+  - Club América
+  - Aguilas
+  - Águilas del América
+
+guadalajara: 
+  - Guadalajara
+  - Chivas
+  - Chivas Rayadas
+  - Club Deportivo Guadalajara
+
+cruzazul: 
+  - Cruz Azul
+  - La Máquina
+  - La Maquina Celeste
+
+pumas: 
+  - Pumas
+  - UNAM
+  - Universidad
+  - Pumas UNAM
+
+monterrey: 
+  - Monterrey
+  - Rayados
+  - Club de Futbol Monterrey
+
+tigres: 
+  - Tigres
+  - UANL
+  - Tigres UANL
+
+atlas: 
+  - Atlas
+  - Rojinegros
+  - Atlas FC
+
+toluca: 
+  - Toluca
+  - Diablos Rojos
+  - Deportivo Toluca
+
+santos: 
+  - Santos
+  - Santos Laguna
+  - Guerreros
+
+leon: 
+  - León
+  - Leon
+  - Club León
+  - La Fiera
+
+puebla: 
+  - Puebla
+  - Camoteros
+  - Club Puebla
+
+tijuana: 
+  - Tijuana
+  - Xolos
+  - Xoloitzcuintles
+
+pachuca: 
+  - Pachuca
+  - Tuzos
+  - Club Pachuca
+
+queretaro: 
+  - Querétaro
+  - Queretaro
+  - Gallos Blancos
+
+necaxa: 
+  - Necaxa
+  - Rayos
+  - Club Necaxa
+
+sanluis: 
+  - San Luis
+  - Atlético San Luis
+  - Atletico San Luis
+
+mazatlan: 
+  - Mazatlán
+  - Mazatlan FC
+  - Mazatlan
+
+juarez: 
+  - Juárez
+  - Juarez
+  - FC Juárez
+  - Bravos de Juárez
+
+# Puedes agregar más equipos según sea necesario
