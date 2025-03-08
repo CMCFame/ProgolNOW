@@ -15,13 +15,23 @@ import sys
 from dotenv import load_dotenv
 from typing_extensions import TypedDict
 
-# Importación condicional de pdf2image para mayor compatibilidad
+# Versión de la aplicación
+APP_VERSION = "1.0.1"
+
+# Configuración inicial para manejo de errores
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Importación condicional para mayor compatibilidad
 try:
-    import pdf2image
-    PDF_SUPPORT = True
+    import cv2
+    CV2_SUPPORT = True
+    logger.info("OpenCV está disponible para procesamiento de imágenes")
 except ImportError:
-    PDF_SUPPORT = False
-    print("pdf2image no está disponible. No se podrán procesar archivos PDF.")
+    CV2_SUPPORT = False
+    logger.warning("OpenCV no está disponible. Se usará solo Pillow para procesamiento de imágenes.")
+
 
 import re
 import io
@@ -188,8 +198,7 @@ def load_teams_database():
 # Módulo para procesar la imagen de la quiniela
 def process_quiniela_image(image):
     """
-    Procesa una imagen de quiniela utilizando técnicas básicas de procesamiento de imágenes
-    y reconocimiento basado en plantillas.
+    Procesa una imagen de quiniela utilizando Pillow y/o OpenCV si está disponible.
     
     Args:
         image: Imagen en formato PIL o bytes.
@@ -203,23 +212,38 @@ def process_quiniela_image(image):
     # Preprocesamiento de la imagen para mejorar resultados
     try:
         # Convertir a escala de grises
-        image = ImageOps.grayscale(image)
+        image_gray = ImageOps.grayscale(image)
         
         # Aumentar contraste
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(2.0)
+        enhancer = ImageEnhance.Contrast(image_gray)
+        enhanced_image = enhancer.enhance(2.0)
         
         # Aplicar filtro para mejorar detalles
-        image = image.filter(ImageFilter.SHARPEN)
+        filtered_image = enhanced_image.filter(ImageFilter.SHARPEN)
         
         # Mostrar la imagen procesada
-        st.image(image, caption="Imagen procesada", use_column_width=True, width=400)
+        st.image(filtered_image, caption="Imagen procesada", use_column_width=True, width=400)
         
-        # Extraer características de la imagen (zonas de texto)
-        # Este es un método simple; en una implementación real,
-        # se usarían técnicas más avanzadas
+        # Si OpenCV está disponible, intentar procesamiento adicional
+        if CV2_SUPPORT:
+            try:
+                # Convertir imagen PIL a formato CV2
+                cv2_image = np.array(filtered_image)
+                
+                # Aplicar umbral adaptativo para mejorar bordes y texto
+                _, thresholded = cv2.threshold(cv2_image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                
+                # Mostrar resultados del procesamiento con OpenCV
+                st.image(thresholded, caption="Procesado con OpenCV", use_column_width=True, width=400)
+                
+                # Técnicas adicionales que podríamos aplicar si tuviéramos un OCR
+                # Dilatación para mejorar conexiones
+                # kernel = np.ones((1, 1), np.uint8)
+                # dilated = cv2.dilate(thresholded, kernel, iterations=1)
+            except Exception as e:
+                st.warning(f"No se pudo procesar con OpenCV: {str(e)}")
         
-        # Para demostración, usamos un enfoque basado en reglas con equipos conocidos
+        # Para esta demostración, usamos la interfaz manual con una lista predefinida
         return extract_teams_from_structure(image)
     
     except Exception as e:
@@ -437,38 +461,8 @@ def main():
             uploaded_file = st.file_uploader("Sube la imagen de tu quiniela", type=["jpg", "jpeg", "png", "pdf"])
             
             if uploaded_file is not None:
-                # Manejar PDFs o imágenes
-                if uploaded_file.name.lower().endswith('.pdf'):
-                    if PDF_SUPPORT:
-                        try:
-                            st.info("Procesando archivo PDF. Se utilizará solo la primera página.")
-                            # Convertir PDF a imagen usando pdf2image
-                            pdf_pages = pdf2image.convert_from_bytes(
-                                uploaded_file.read(),
-                                first_page=1,
-                                last_page=1
-                            )
-                            if pdf_pages:
-                                image = pdf_pages[0]
-                                st.image(image, caption="Primera página del PDF", use_column_width=True, width=400)
-                                
-                                if st.button("Procesar Quiniela desde PDF"):
-                                    with st.spinner("Procesando imagen desde PDF..."):
-                                        quiniela_matches = process_quiniela_image(image)
-                                        
-                                        if quiniela_matches:
-                                            st.session_state.quiniela_matches = quiniela_matches
-                                        else:
-                                            st.warning("No se detectaron partidos automáticamente. Utiliza la opción 'Selección manual'.")
-                            else:
-                                st.error("No se pudo extraer ninguna página del PDF.")
-                        except Exception as e:
-                            st.error(f"Error al procesar el PDF: {str(e)}")
-                            st.info("Por favor, sube una imagen en formato JPG, PNG o JPEG.")
-                    else:
-                        st.warning("El soporte para PDF no está disponible en este entorno.")
-                        st.info("Por favor, sube una imagen en formato JPG, PNG o JPEG.")
-                else:
+                # Manejar distintos formatos de imagen
+                try:
                     image = Image.open(uploaded_file)
                     st.image(image, caption="Imagen cargada", use_column_width=True, width=400)
                 
@@ -480,6 +474,9 @@ def main():
                                 st.session_state.quiniela_matches = quiniela_matches
                             else:
                                 st.warning("No se detectaron partidos automáticamente. Utiliza la opción 'Selección manual'.")
+                except Exception as e:
+                    st.error(f"Error al procesar la imagen: {str(e)}")
+                    st.info("Por favor, sube una imagen en formato JPG, PNG o JPEG válido.")
         
         elif upload_method == "Selección manual":
             # La función actual muestra un formulario para selección manual
@@ -641,6 +638,11 @@ def main():
                 time.sleep(300)  # Esperar 5 minutos
                 st.experimental_rerun()
 
-# Ejecutar la aplicación
 if __name__ == "__main__":
-    main()
+    try:
+        # Mostrar versión de la aplicación
+        print(f"Iniciando Quiniela Progol v{APP_VERSION}")
+        main()
+    except Exception as e:
+        st.error(f"Error inesperado: {str(e)}")
+        logger.exception("Error no controlado en la aplicación:")
