@@ -2,7 +2,7 @@ streamlit==1.26.0
 requests==2.31.0
 pandas==2.0.3
 pytz==2023.3
-Pillow==10.0.0
+Pillow>=7.1.0,<10.0.0
 numpy==1.24.3
 beautifulsoup4==4.12.2
 pdf2image==1.16.3

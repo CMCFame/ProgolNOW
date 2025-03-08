@@ -11,8 +11,18 @@ from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import io
 import yaml
 import os
+import sys
 from dotenv import load_dotenv
 from typing_extensions import TypedDict
+
+# Importación condicional de pdf2image para mayor compatibilidad
+try:
+    import pdf2image
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    print("pdf2image no está disponible. No se podrán procesar archivos PDF.")
+
 import re
 import io
 import os
@@ -429,10 +439,35 @@ def main():
             if uploaded_file is not None:
                 # Manejar PDFs o imágenes
                 if uploaded_file.name.lower().endswith('.pdf'):
-                    st.warning("Archivo PDF detectado. Se procesará solo la primera página.")
-                    # Si el usuario quiere procesar PDFs, aquí se usaría pdf2image
-                    # Por ahora, mostraremos una advertencia
-                    st.info("Por favor, sube una imagen en formato JPG, PNG o JPEG.")
+                    if PDF_SUPPORT:
+                        try:
+                            st.info("Procesando archivo PDF. Se utilizará solo la primera página.")
+                            # Convertir PDF a imagen usando pdf2image
+                            pdf_pages = pdf2image.convert_from_bytes(
+                                uploaded_file.read(),
+                                first_page=1,
+                                last_page=1
+                            )
+                            if pdf_pages:
+                                image = pdf_pages[0]
+                                st.image(image, caption="Primera página del PDF", use_column_width=True, width=400)
+                                
+                                if st.button("Procesar Quiniela desde PDF"):
+                                    with st.spinner("Procesando imagen desde PDF..."):
+                                        quiniela_matches = process_quiniela_image(image)
+                                        
+                                        if quiniela_matches:
+                                            st.session_state.quiniela_matches = quiniela_matches
+                                        else:
+                                            st.warning("No se detectaron partidos automáticamente. Utiliza la opción 'Selección manual'.")
+                            else:
+                                st.error("No se pudo extraer ninguna página del PDF.")
+                        except Exception as e:
+                            st.error(f"Error al procesar el PDF: {str(e)}")
+                            st.info("Por favor, sube una imagen en formato JPG, PNG o JPEG.")
+                    else:
+                        st.warning("El soporte para PDF no está disponible en este entorno.")
+                        st.info("Por favor, sube una imagen en formato JPG, PNG o JPEG.")
                 else:
                     image = Image.open(uploaded_file)
                     st.image(image, caption="Imagen cargada", use_column_width=True, width=400)
