@@ -1,6 +1,5 @@
 import streamlit as st
 from modules.live_matches import show_live_matches
-from modules.quiniela_analyzer import show_quiniela_analyzer
 from modules.predictions import show_predictions
 from modules.user_data import load_user_data, save_user_data
 import modules.ui_components as ui

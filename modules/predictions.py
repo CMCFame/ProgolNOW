@@ -1,7 +1,6 @@
 # modules/predictions.py
 import streamlit as st
 from modules.user_data import save_user_data
-from modules.quiniela_analyzer import show_quiniela_analyzer
 from utils.api_client import FootballAPIClient
 import random
 from data.sample_data import progol_matches
@@ -27,6 +26,8 @@ def show_predictions():
     if selected_tab == "Mis Predicciones":
         render_predictions_ui()
     else:
+        # En lugar de llamar directamente, importamos justo cuando se necesita
+        from modules.quiniela_analyzer import show_quiniela_analyzer
         show_quiniela_analyzer()
 
 def render_predictions_ui():
