@@ -1,177 +1,116 @@
 import streamlit as st
-import requests
-from datetime import datetime, timedelta
+from modules.live_matches import show_live_matches
+from modules.quiniela_analyzer import show_quiniela_analyzer
+from modules.predictions import show_predictions
+from modules.user_data import load_user_data, save_user_data
+import modules.ui_components as ui
 
-# ----------------------------
-# 1) Configure the leagues you want to show
-# ----------------------------
-# These numeric IDs come from the "Get Leagues List" response.
-TARGET_LEAGUE_IDS = {
-    # England
-    47:  "Premier League",  # English Premier League
+# Configuración de la página
+st.set_page_config(
+    page_title="Progol Tracker",
+    page_icon="⚽",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-    # Spain
-    87:  "LaLiga",
+# Cargar CSS personalizado
+def load_css():
+    with open("assets/styles.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-    # Germany
-    54:  "Bundesliga",
+load_css()
 
-    # France
-    53:  "Ligue 1",
+# Estado de la aplicación
+if 'user_data' not in st.session_state:
+    st.session_state.user_data = load_user_data()
 
-    # Italy
-    55:  "Serie A",
+# Encabezado principal
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.title("Progol Tracker")
+    st.markdown("*Sigue los partidos y registra tus quinielas*")
 
-    # Mexico
-    230:  "Liga MX",
-    8976: "Liga de Expansión MX",
-    9906: "Liga MX Femenil",
+with col2:
+    current_journey = st.session_state.user_data.get("current_journey", "Jornada #24")
+    st.markdown(f"<div class='current-journey'>{current_journey}</div>", unsafe_allow_html=True)
 
-    # Argentina
-    112:  "Liga Profesional",
+# Tabs principales
+tabs = ["Partidos en Vivo", "Mi Quiniela", "Historial", "Estadísticas"]
+selected_tab = ui.create_tabs(tabs)
 
-    # Portugal
-    61:   "Liga Portugal",
+# Contenido según la pestaña seleccionada
+if selected_tab == "Partidos en Vivo":
+    show_live_matches()
+elif selected_tab == "Mi Quiniela":
+    show_predictions()
+elif selected_tab == "Historial":
+    ui.show_history(st.session_state.user_data)
+elif selected_tab == "Estadísticas":
+    ui.show_statistics(st.session_state.user_data)
 
-    # Belgium
-    40:   "First Division A",
-}
-
-API_HOST = "free-api-live-football-data.p.rapidapi.com"
-
-# ----------------------------
-# 2) Data Fetching Functions (with debug)
-# ----------------------------
-def fetch_live_matches():
-    """
-    Fetch current live matches from the RapidAPI endpoint.
-    Includes debug output in the Streamlit UI.
-    """
-    url = f"https://{API_HOST}/football-current-live"
-    headers = {
-        "x-rapidapi-key": st.secrets["rapidapi"]["api_key"],
-        "x-rapidapi-host": API_HOST
-    }
-
-    # ---- Debug info before making the request ----
-    st.write("DEBUG: Fetching live matches...")
-    st.write("DEBUG: URL:", url)
-    st.write("DEBUG: Headers:", headers)
-
-    resp = requests.get(url, headers=headers)
-
-    # ---- Debug info after receiving the response ----
-    st.write("DEBUG: Response Status:", resp.status_code)
-    st.write("DEBUG: Response Text:", resp.text)
-
-    if resp.status_code == 200:
-        return resp.json()
-    else:
-        st.error(f"Error fetching live matches (HTTP {resp.status_code}).")
-        return None
-
-def fetch_matches_by_date(date_str):
-    """
-    Fetch matches for a specific date (YYYYMMDD) from the RapidAPI endpoint.
-    Includes debug output in the Streamlit UI.
-    """
-    url = f"https://{API_HOST}/football-get-matches-by-date"
-    headers = {
-        "x-rapidapi-key": st.secrets["rapidapi"]["api_key"],
-        "x-rapidapi-host": API_HOST
-    }
-    params = {"date": date_str}
-
-    # ---- Debug info before making the request ----
-    st.write(f"DEBUG: Fetching matches for date {date_str}...")
-    st.write("DEBUG: URL:", url)
-    st.write("DEBUG: Headers:", headers)
-    st.write("DEBUG: Query Params:", params)
-
-    resp = requests.get(url, headers=headers, params=params)
-
-    # ---- Debug info after receiving the response ----
-    st.write("DEBUG: Response Status:", resp.status_code)
-    st.write("DEBUG: Response Text:", resp.text)
-
-    if resp.status_code == 200:
-        return resp.json()
-    else:
-        st.error(f"Error fetching matches for {date_str} (HTTP {resp.status_code}).")
-        return None
-
-def filter_matches(matches):
-    """
-    Given a list of match objects, return only those whose 'leagueId'
-    is in our TARGET_LEAGUE_IDS.
-    """
-    if not matches:
-        return []
-    return [m for m in matches if m.get("leagueId") in TARGET_LEAGUE_IDS]
-
-# ----------------------------
-# 3) Streamlit App Layout
-# ----------------------------
-st.title("Football Matches (With Debug)")
-
-# 3.1 Live Matches
-st.header("Live Matches (Filtered)")
-
-live_data = fetch_live_matches()
-if live_data:
-    all_live = live_data.get("response", {}).get("live", [])
-    filtered_live = filter_matches(all_live)
-
-    if not filtered_live:
-        st.write("No live matches from your target leagues at the moment.")
-    else:
-        for match in filtered_live:
-            league_id = match["leagueId"]
-            league_name = TARGET_LEAGUE_IDS.get(league_id, "Unknown League")
-            home = match["home"]["name"]
-            away = match["away"]["name"]
-            home_score = match["home"].get("score", "N/A")
-            away_score = match["away"].get("score", "N/A")
-            match_time = match.get("time", "N/A")
-            status_info = match.get("status", {})
-
-            with st.expander(f"{league_name}: {home} vs {away}"):
-                st.write(f"**Time**: {match_time}")
-                st.write(f"**Score**: {home_score} - {away_score}")
-                st.write(f"**Status**: {status_info.get('scoreStr', 'N/A')}")
-                st.write(f"**Live Time**: {status_info.get('liveTime', {}).get('long', 'N/A')}")
-else:
-    st.write("No live data returned (request failed).")
-
-# 3.2 Historical Matches - Past 3 Days
-st.header("Historical Matches (Past 3 Days)")
-
-today = datetime.now()
-for i in range(1, 4):
-    date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
-    st.subheader(f"Matches on {date_str}")
+# Columna lateral
+with st.sidebar:
+    st.image("assets/logo.png", width=100)
+    st.header("Mis Estadísticas")
     
-    hist_data = fetch_matches_by_date(date_str)
-    if hist_data:
-        all_hist = hist_data.get("response", {}).get("matches", [])
-        filtered_hist = filter_matches(all_hist)
-
-        if not filtered_hist:
-            st.write("No matches found from your leagues for this date.")
-        else:
-            for match in filtered_hist:
-                league_id = match["leagueId"]
-                league_name = TARGET_LEAGUE_IDS.get(league_id, "Unknown League")
-                home = match["home"]["name"]
-                away = match["away"]["name"]
-                home_score = match["home"].get("score", "N/A")
-                away_score = match["away"].get("score", "N/A")
-                match_time = match.get("time", "N/A")
-                status_info = match.get("status", {})
-
-                with st.expander(f"{league_name}: {home} vs {away}"):
-                    st.write(f"**Time**: {match_time}")
-                    st.write(f"**Score**: {home_score} - {away_score}")
-                    st.write(f"**Status**: {status_info.get('scoreStr', 'N/A')}")
-    else:
-        st.write("No data returned for this date.")
+    # Datos estadísticos del usuario
+    user_stats = st.session_state.user_data.get("stats", {})
+    quinielas = user_stats.get("quinielas", 8)
+    aciertos = user_stats.get("aciertos", 76)
+    puntos = user_stats.get("puntos", 112)
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Quinielas", quinielas)
+    col2.metric("Aciertos", aciertos)
+    col3.metric("Puntos", puntos)
+    
+    st.divider()
+    st.subheader("Mejor Jornada")
+    mejor_jornada = user_stats.get("mejor_jornada", {"numero": 18, "fecha": "12/02/2023", "aciertos": 14})
+    st.info(f"Jornada #{mejor_jornada['numero']} ({mejor_jornada['fecha']}): {mejor_jornada['aciertos']} aciertos")
+    
+    st.divider()
+    st.subheader("Clasificación")
+    
+    # Mostrar tabla de clasificación
+    clasificacion = [
+        {"pos": 1, "nombre": "Carlos M.", "puntos": 158},
+        {"pos": 2, "nombre": "Ana R.", "puntos": 142},
+        {"pos": 3, "nombre": "Luis G.", "puntos": 136},
+        {"pos": 4, "nombre": "Tú", "puntos": 112},
+        {"pos": 5, "nombre": "María J.", "puntos": 98}
+    ]
+    
+    for persona in clasificacion:
+        ui.render_clasificacion_item(persona)
+    
+    if st.button("Ver clasificación completa"):
+        st.toast("Funcionalidad en desarrollo")
+    
+    st.divider()
+    st.subheader("Acciones Rápidas")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📌 Llenado Rápido"):
+            # Implementar llenado rápido
+            st.session_state.user_data["predictions"]["main"] = ["L"] * 14
+            st.session_state.user_data["predictions"]["revenge"] = ["L"] * 7
+            save_user_data(st.session_state.user_data)
+            st.toast("¡Predicciones completadas rápidamente!")
+            st.rerun()
+        
+        if st.button("📊 Exportar"):
+            # Exportar datos
+            st.toast("Exportando datos...")
+            ui.download_user_data(st.session_state.user_data)
+    
+    with col2:
+        if st.button("🔄 Compartir"):
+            # Compartir resultados
+            st.toast("Compartiendo resultados...")
+            st.balloons()
+        
+        if st.button("📥 Importar"):
+            # Importar datos
+            st.toast("Función de importación en desarrollo")
