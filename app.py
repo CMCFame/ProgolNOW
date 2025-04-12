@@ -6,19 +6,12 @@ from datetime import datetime, timedelta
 import re
 import base64
 import io
-import ScraperFC.sofascore as sfs
+import requests
+import json
 import plotly.express as px
-import plotly.graph_objects as go
 
 # Set page config
 st.set_page_config(page_title="Quiniela Match Tracker", layout="wide", page_icon="⚽")
-
-# Initialize Sofascore scraper
-@st.cache_resource
-def get_scraper():
-    return sfs.Sofascore()
-
-scraper = get_scraper()
 
 # App title and description
 st.title("⚽ Quiniela Match Tracker")
@@ -28,72 +21,47 @@ Upload your Quiniela CSV or Excel file to get started.
 """)
 
 # Helper functions
-def parse_date_time(date_str, time_str):
-    """Parse date and time strings into a datetime object."""
-    if not date_str or not time_str:
-        return None
+# Direct Sofascore API interaction (replacing ScraperFC)
+def get_api_response(url):
+    """Get response from Sofascore API with proper headers."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.sofascore.com/',
+        'Origin': 'https://www.sofascore.com',
+    }
     
-    # Extract date parts (assuming MM/DD format)
-    match = re.match(r'(\d+)/(\d+)', date_str)
-    if not match:
-        return None
-    
-    month, day = map(int, match.groups())
-    
-    # Get current year
-    current_year = datetime.now().year
-    
-    # Extract time parts
-    match = re.match(r'(\d+):(\d+)', time_str)
-    if not match:
-        return None
-    
-    hour, minute = map(int, match.groups())
-    
-    # Create datetime object
     try:
-        dt = datetime(current_year, month, day, hour, minute)
-        
-        # If the date is in the past by more than 6 months, it's probably next year
-        if (datetime.now() - dt).days > 180:
-            dt = dt.replace(year=current_year + 1)
-            
-        return dt
-    except ValueError:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.warning(f"API request failed with status code: {response.status_code}")
+            return None
+    except Exception as e:
+        st.warning(f"API request error: {e}")
         return None
 
-def find_team_match(team_name):
-    """Find a match in Sofascore based on team name."""
-    # Try to find the most appropriate league based on the team name
-    possible_leagues = determine_possible_leagues(team_name)
+def search_team(team_name):
+    """Search for a team by name on Sofascore."""
+    # Encode the team name for the URL
+    encoded_name = requests.utils.quote(team_name)
+    url = f"https://api.sofascore.com/api/v1/search/teams/{encoded_name}"
     
-    # For each possible league, try to find matches
-    for league_name in possible_leagues:
-        if league_name not in scraper.comps:
-            continue
-            
-        try:
-            # Get the most recent season
-            seasons = scraper.get_valid_seasons(league_name)
-            if not seasons:
-                continue
-                
-            latest_season = list(seasons.keys())[0]
-            
-            # Get matches for this league and season
-            matches = scraper.get_match_dicts(latest_season, league_name)
-            
-            # Search for matches containing the team name
-            for match in matches:
-                home_team = match['homeTeam']['name']
-                away_team = match['awayTeam']['name']
-                
-                if similar_team_name(team_name, home_team) or similar_team_name(team_name, away_team):
-                    return match
-        except Exception as e:
-            st.error(f"Error searching in {league_name}: {e}")
+    response = get_api_response(url)
+    if response and 'teams' in response:
+        return response['teams']
+    return []
+
+def get_team_events(team_id, limit=10):
+    """Get recent events (matches) for a team."""
+    url = f"https://api.sofascore.com/api/v1/team/{team_id}/events/last/0?limit={limit}"
     
-    return None
+    response = get_api_response(url)
+    if response and 'events' in response:
+        return response['events']
+    return []
 
 def similar_team_name(name1, name2):
     """Check if two team names are similar."""
@@ -185,49 +153,6 @@ def similar_team_name(name1, name2):
     # Check if one name is fully contained in the other
     return name1 in name2 or name2 in name1
 
-def determine_possible_leagues(team_name):
-    """Determine possible leagues based on team name."""
-    team_name = team_name.lower()
-    
-    # Mexican teams
-    if any(name in team_name for name in ['guadalajara', 'chivas', 'america', 'cruz azul', 'monterrey', 'tigres', 'pumas', 
-                       'atlas', 'toluca', 'juarez', 'santos', 'pachuca', 'queretaro', 'mazatlan', 
-                       'puebla', 'tijuana', 'necaxa', 'leon']):
-        return ['Liga MX', 'MLS']
-    
-    # South American teams
-    if any(name in team_name for name in ['flamengo', 'boca', 'river', 'palmeiras', 'santos', 'gremio', 'botafogo', 
-                             'fluminense', 'corinthians', 'estudiantes', 'racing', 'nacional', 'penarol', 
-                             'bragantino', 'millonarios', 'atletico nacional']):
-        return ['Brazilian Serie A', 'Argentina Liga Profesional', 'Argentina Copa de la Liga Profesional', 'Copa Libertadores']
-    
-    # North American teams
-    if any(name in team_name for name in ['miami', 'chicago', 'columbus', 'st. louis', 'atlanta', 'toronto', 'montreal']):
-        return ['MLS', 'USL Championship']
-    
-    # Spanish teams
-    if any(name in team_name for name in ['barcelona', 'madrid', 'atletico', 'sevilla', 'betis', 'villarreal', 'valencia']):
-        return ['La Liga', 'Champions League', 'Europa League']
-    
-    # English teams
-    if any(name in team_name for name in ['manchester', 'liverpool', 'chelsea', 'arsenal', 'tottenham', 'everton', 'leeds']):
-        return ['EPL', 'Champions League', 'Europa League']
-    
-    # German teams
-    if any(name in team_name for name in ['bayern', 'dortmund', 'leipzig', 'leverkusen', 'frankfurt', 'schalke', 'kiel', 'pauli']):
-        return ['Bundesliga', 'Champions League', 'Europa League']
-    
-    # Italian teams
-    if any(name in team_name for name in ['juventus', 'inter', 'milan', 'napoli', 'roma', 'lazio', 'genoa', 'verona']):
-        return ['Serie A', 'Champions League', 'Europa League']
-    
-    # French teams
-    if any(name in team_name for name in ['psg', 'paris', 'lyon', 'marseille', 'monaco', 'nice', 'strasbourg']):
-        return ['Ligue 1', 'Champions League', 'Europa League']
-    
-    # Default to popular leagues
-    return ['Liga MX', 'MLS', 'EPL', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1', 'Champions League']
-
 def match_to_result_code(match_data):
     """Convert match data to result code (L, E, V)."""
     if 'status' not in match_data or match_data['status']['type'] != 'finished':
@@ -242,6 +167,50 @@ def match_to_result_code(match_data):
         return 'V'  # Visitante/Away win
     else:
         return 'E'  # Empate/Draw
+
+def find_match_for_teams(home_team, away_team):
+    """Find a match involving both teams."""
+    # First, try to find the home team
+    home_teams = search_team(home_team)
+    
+    for team in home_teams[:3]:  # Check the first 3 results
+        team_id = team['id']
+        team_events = get_team_events(team_id)
+        
+        # Look for events that involve the away team
+        for event in team_events:
+            event_home = event['homeTeam']['name']
+            event_away = event['awayTeam']['name']
+            
+            # Check if this event involves both teams (in any order)
+            if (similar_team_name(home_team, event_home) and similar_team_name(away_team, event_away)) or \
+               (similar_team_name(home_team, event_away) and similar_team_name(away_team, event_home)):
+                return event
+        
+        # Add a small delay to avoid API rate limiting
+        time.sleep(0.2)
+    
+    # If not found, try the away team
+    away_teams = search_team(away_team)
+    
+    for team in away_teams[:3]:  # Check the first 3 results
+        team_id = team['id']
+        team_events = get_team_events(team_id)
+        
+        # Look for events that involve the home team
+        for event in team_events:
+            event_home = event['homeTeam']['name']
+            event_away = event['awayTeam']['name']
+            
+            # Check if this event involves both teams (in any order)
+            if (similar_team_name(home_team, event_home) and similar_team_name(away_team, event_away)) or \
+               (similar_team_name(home_team, event_away) and similar_team_name(away_team, event_home)):
+                return event
+        
+        # Add a small delay to avoid API rate limiting
+        time.sleep(0.2)
+    
+    return None
 
 def update_quiniela_results(df, match_results):
     """Update the Quiniela dataframe with match results."""
@@ -334,63 +303,6 @@ def update_quiniela_results(df, match_results):
     
     return df_updated
 
-def find_both_teams_match(home_team, away_team):
-    """Find a match with both specific teams."""
-    # Try all possible leagues
-    leagues_to_try = determine_possible_leagues(home_team)
-    leagues_to_try.extend(determine_possible_leagues(away_team))
-    leagues_to_try = list(set(leagues_to_try))  # Remove duplicates
-    
-    for league_name in leagues_to_try:
-        if league_name not in scraper.comps:
-            continue
-            
-        try:
-            # Get the most recent season
-            seasons = scraper.get_valid_seasons(league_name)
-            if not seasons:
-                continue
-                
-            latest_season = list(seasons.keys())[0]
-            
-            # Get matches for this league and season
-            matches = scraper.get_match_dicts(latest_season, league_name)
-            
-            # Search for a match with both teams
-            for match in matches:
-                sofascore_home = match['homeTeam']['name']
-                sofascore_away = match['awayTeam']['name']
-                
-                # Check if both teams match in correct order
-                if similar_team_name(home_team, sofascore_home) and similar_team_name(away_team, sofascore_away):
-                    return match, league_name
-                
-                # Check if teams match in reversed order
-                if similar_team_name(home_team, sofascore_away) and similar_team_name(away_team, sofascore_home):
-                    return match, league_name
-                    
-        except Exception as e:
-            continue
-    
-    # If not found through league search, try searching for each team individually
-    home_match = find_team_match(home_team)
-    if home_match:
-        sofascore_home = home_match['homeTeam']['name']
-        sofascore_away = home_match['awayTeam']['name']
-        
-        if similar_team_name(away_team, sofascore_home) or similar_team_name(away_team, sofascore_away):
-            return home_match, "Found via team search"
-    
-    away_match = find_team_match(away_team)
-    if away_match:
-        sofascore_home = away_match['homeTeam']['name']
-        sofascore_away = away_match['awayTeam']['name']
-        
-        if similar_team_name(home_team, sofascore_home) or similar_team_name(home_team, sofascore_away):
-            return away_match, "Found via team search"
-    
-    return None, None
-
 # File uploader
 uploaded_file = st.file_uploader("Upload your Quiniela CSV or Excel file", type=['csv', 'xlsx', 'xls'])
 
@@ -479,8 +391,7 @@ if uploaded_file:
                         'home_team': home_team,
                         'away_team': away_team,
                         'sofascore_match': None,
-                        'result': None,
-                        'league': None
+                        'result': None
                     }
                     
                     matches.append((idx, home_team, away_team))
@@ -504,27 +415,28 @@ if uploaded_file:
                         status_text.text(f"Searching for {home_team} vs {away_team}...")
                         
                         # Find match in Sofascore
-                        match, league = find_both_teams_match(home_team, away_team)
+                        match = find_match_for_teams(home_team, away_team)
                         
                         if match:
-                            # Verify it's the correct match
-                            sofascore_home = match['homeTeam']['name']
-                            sofascore_away = match['awayTeam']['name']
-                            
                             # Store match details
                             match_info[idx]['sofascore_match'] = match
                             match_info[idx]['result'] = match_to_result_code(match)
-                            match_info[idx]['league'] = league
                             
-                            # Add to results table
+                            # Extract info for display
+                            sofascore_home = match['homeTeam']['name']
+                            sofascore_away = match['awayTeam']['name']
                             status = match['status']['description']
-                            score = f"{match['homeScore'].get('current', 0)} - {match['awayTeam'].get('current', 0)}"
+                            
+                            # Get scores
+                            home_score = match.get('homeScore', {}).get('current', 0)
+                            away_score = match.get('awayScore', {}).get('current', 0)
+                            score = f"{home_score} - {away_score}"
+                            
                             result_code = match_info[idx]['result'] if match_info[idx]['result'] else "Pending"
                             
                             match_results_table.append({
                                 "Match": f"{home_team} vs {away_team}",
                                 "Sofascore Match": f"{sofascore_home} vs {sofascore_away}",
-                                "League": league,
                                 "Status": status,
                                 "Score": score,
                                 "Result": result_code
@@ -536,7 +448,6 @@ if uploaded_file:
                             match_results_table.append({
                                 "Match": f"{home_team} vs {away_team}",
                                 "Sofascore Match": "Not found",
-                                "League": "N/A",
                                 "Status": "N/A",
                                 "Score": "N/A",
                                 "Result": "N/A"
@@ -546,7 +457,7 @@ if uploaded_file:
                         
                         # Update progress
                         progress_bar.progress((i + 1) / len(matches))
-                        time.sleep(0.2)  # Small delay to prevent API rate limiting
+                        time.sleep(0.5)  # Delay to prevent API rate limiting
                     
                     status_text.text("Finished searching for matches")
                     
@@ -663,7 +574,7 @@ else:
 st.markdown("---")
 st.markdown("""
 **About this app:**
-- Built with Streamlit and ScraperFC
-- Data source: Sofascore
+- Built with Streamlit
+- Data source: Sofascore API
 - This app updates your Quiniela with live match results
 """)
