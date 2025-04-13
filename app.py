@@ -20,8 +20,28 @@ This app tracks the matches in your Quiniela spreadsheet and updates them with l
 Upload your Quiniela CSV or Excel file to get started.
 """)
 
+# Set up session state for storing data between reruns
+if 'search_completed' not in st.session_state:
+    st.session_state.search_completed = False
+if 'match_results' not in st.session_state:
+    st.session_state.match_results = []
+if 'match_info' not in st.session_state:
+    st.session_state.match_info = {}
+if 'leagues_to_search' not in st.session_state:
+    st.session_state.leagues_to_search = [
+        {"name": "Liga MX", "id": 10},
+        {"name": "MLS", "id": 242},
+        {"name": "EPL", "id": 17},
+        {"name": "La Liga", "id": 8},
+        {"name": "Bundesliga", "id": 35},
+        {"name": "Serie A", "id": 23},
+        {"name": "Ligue 1", "id": 34},
+        {"name": "Champions League", "id": 7},
+        {"name": "Europa League", "id": 679}
+    ]
+
 # Helper functions
-# Direct Sofascore API interaction (replacing ScraperFC)
+# Direct Sofascore API interaction
 def get_api_response(url):
     """Get response from Sofascore API with proper headers."""
     headers = {
@@ -37,10 +57,8 @@ def get_api_response(url):
         if response.status_code == 200:
             return response.json()
         else:
-            st.warning(f"API request failed with status code: {response.status_code}")
             return None
     except Exception as e:
-        st.warning(f"API request error: {e}")
         return None
 
 def search_team(team_name):
@@ -63,8 +81,49 @@ def get_team_events(team_id, limit=10):
         return response['events']
     return []
 
+def get_league_events(league_id, season_id=None):
+    """Get events for a specific league."""
+    # If no season ID, first get the latest season
+    if not season_id:
+        url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
+        response = get_api_response(url)
+        if response and 'seasons' in response and len(response['seasons']) > 0:
+            season_id = response['seasons'][0]['id']
+        else:
+            return []
+    
+    # Get events for this season
+    url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/events/last/0"
+    response = get_api_response(url)
+    if response and 'events' in response:
+        return response['events']
+    
+    return []
+
+def get_upcoming_events(league_id, season_id=None):
+    """Get upcoming events for a specific league."""
+    # If no season ID, first get the latest season
+    if not season_id:
+        url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
+        response = get_api_response(url)
+        if response and 'seasons' in response and len(response['seasons']) > 0:
+            season_id = response['seasons'][0]['id']
+        else:
+            return []
+    
+    # Get events for this season
+    url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/events/next/0"
+    response = get_api_response(url)
+    if response and 'events' in response:
+        return response['events']
+    
+    return []
+
 def similar_team_name(name1, name2):
     """Check if two team names are similar."""
+    if not name1 or not name2:
+        return False
+        
     # Convert to lowercase
     name1 = name1.lower()
     name2 = name2.lower()
@@ -168,47 +227,61 @@ def match_to_result_code(match_data):
     else:
         return 'E'  # Empate/Draw
 
-def find_match_for_teams(home_team, away_team):
-    """Find a match involving both teams."""
-    # First, try to find the home team
+def search_for_match(home_team, away_team):
+    """Advanced search for a match with multiple approaches."""
+    # 1. First try all leagues for both upcoming and recent events
+    for league in st.session_state.leagues_to_search:
+        # Check recent events
+        events = get_league_events(league["id"])
+        match = find_match_in_events(events, home_team, away_team)
+        if match:
+            return match, f"Found in {league['name']} (recent)"
+        
+        # Check upcoming events
+        events = get_upcoming_events(league["id"])
+        match = find_match_in_events(events, home_team, away_team)
+        if match:
+            return match, f"Found in {league['name']} (upcoming)"
+        
+        # Add a small delay to prevent API rate limiting
+        time.sleep(0.2)
+    
+    # 2. Try searching by team name
+    # Search for home team
     home_teams = search_team(home_team)
-    
-    for team in home_teams[:3]:  # Check the first 3 results
+    for team in home_teams[:2]:  # Limit to first 2 to save time
         team_id = team['id']
-        team_events = get_team_events(team_id)
-        
-        # Look for events that involve the away team
-        for event in team_events:
-            event_home = event['homeTeam']['name']
-            event_away = event['awayTeam']['name']
-            
-            # Check if this event involves both teams (in any order)
-            if (similar_team_name(home_team, event_home) and similar_team_name(away_team, event_away)) or \
-               (similar_team_name(home_team, event_away) and similar_team_name(away_team, event_home)):
-                return event
-        
-        # Add a small delay to avoid API rate limiting
+        events = get_team_events(team_id)
+        match = find_match_in_events(events, home_team, away_team)
+        if match:
+            return match, f"Found via team search ({team['name']})"
         time.sleep(0.2)
     
-    # If not found, try the away team
+    # Search for away team if home team search didn't work
     away_teams = search_team(away_team)
-    
-    for team in away_teams[:3]:  # Check the first 3 results
+    for team in away_teams[:2]:  # Limit to first 2 to save time
         team_id = team['id']
-        team_events = get_team_events(team_id)
-        
-        # Look for events that involve the home team
-        for event in team_events:
-            event_home = event['homeTeam']['name']
-            event_away = event['awayTeam']['name']
-            
-            # Check if this event involves both teams (in any order)
-            if (similar_team_name(home_team, event_home) and similar_team_name(away_team, event_away)) or \
-               (similar_team_name(home_team, event_away) and similar_team_name(away_team, event_home)):
-                return event
-        
-        # Add a small delay to avoid API rate limiting
+        events = get_team_events(team_id)
+        match = find_match_in_events(events, home_team, away_team)
+        if match:
+            return match, f"Found via team search ({team['name']})"
         time.sleep(0.2)
+    
+    return None, "Not found"
+
+def find_match_in_events(events, home_team, away_team):
+    """Find a match involving both teams in a list of events."""
+    for event in events:
+        event_home = event['homeTeam']['name']
+        event_away = event['awayTeam']['name']
+        
+        # Check if this event involves both teams (in correct order)
+        if similar_team_name(home_team, event_home) and similar_team_name(away_team, event_away):
+            return event
+        
+        # Also check for reversed order (rare but possible)
+        if similar_team_name(home_team, event_away) and similar_team_name(away_team, event_home):
+            return event
     
     return None
 
@@ -264,7 +337,11 @@ def update_quiniela_results(df, match_results):
     aciertos_rev_row = None
     
     for idx, row in df.iterrows():
-        first_cell = str(row.iloc[0]).lower() if not pd.isna(row.iloc[0]) else ''
+        # Skip if the first cell is not a string
+        if not isinstance(row.iloc[0], str):
+            continue
+            
+        first_cell = row.iloc[0].lower()
         if '# locales' in first_cell:
             locales_row = idx
         elif '# empates' in first_cell:
@@ -318,10 +395,6 @@ if uploaded_file:
         st.subheader("Original Quiniela Data")
         st.dataframe(df)
         
-        # Extract matches from the dataframe
-        matches = []
-        match_info = {}
-        
         # Create tabs for different sections
         tab1, tab2, tab3 = st.tabs(["Match Tracking", "Results Visualization", "Data Export"])
         
@@ -373,9 +446,12 @@ if uploaded_file:
                 df[resultado_col] = ""
             
             # Find rows with matches
+            matches = []
+            match_info = {}
+            
             for idx, row in df.iterrows():
                 # Skip rows that don't look like match rows or summary rows
-                if not pd.isna(row[partido_col]) and isinstance(row[partido_col], str) and 'vs' in row[partido_col]:
+                if pd.notna(row[partido_col]) and isinstance(row[partido_col], str) and 'vs' in row[partido_col]:
                     partido = row[partido_col]
                     
                     # Extract teams
@@ -391,7 +467,8 @@ if uploaded_file:
                         'home_team': home_team,
                         'away_team': away_team,
                         'sofascore_match': None,
-                        'result': None
+                        'result': None,
+                        'source': None
                     }
                     
                     matches.append((idx, home_team, away_team))
@@ -400,74 +477,159 @@ if uploaded_file:
             st.subheader(f"Found {len(matches)} matches to track")
             
             if matches:
-                # Track matches
-                st.write("Click the button below to search for match results:")
-                search_button = st.button("Find Match Results")
+                # League selection for search prioritization
+                st.subheader("League Search Settings")
+                st.markdown("Select the leagues to search in priority order:")
                 
-                if search_button:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Allow adding new leagues
+                    league_name = st.text_input("League Name (e.g., Liga MX)", "")
+                    league_id = st.text_input("League ID (e.g., 10)", "")
+                    
+                    if st.button("Add League") and league_name and league_id:
+                        try:
+                            league_id = int(league_id)
+                            st.session_state.leagues_to_search.append({"name": league_name, "id": league_id})
+                            st.success(f"Added {league_name} (ID: {league_id}) to search priorities")
+                        except ValueError:
+                            st.error("League ID must be a number")
+                
+                with col2:
+                    # Show current leagues and allow reordering
+                    st.write("Current League Search Order:")
+                    for i, league in enumerate(st.session_state.leagues_to_search):
+                        st.write(f"{i+1}. {league['name']} (ID: {league['id']})")
+                
+                # Track matches button
+                st.subheader("Find Match Results")
+                search_button = st.button("Search for Match Results")
+                
+                if search_button or st.session_state.search_completed:
+                    # Reset state if doing a new search
+                    if search_button:
+                        st.session_state.match_results = []
+                        st.session_state.match_info = match_info.copy()
+                    
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    # Search for each match in Sofascore
-                    match_results_table = []
-                    
-                    for i, (idx, home_team, away_team) in enumerate(matches):
-                        status_text.text(f"Searching for {home_team} vs {away_team}...")
+                    # If we haven't completed the search yet, do it
+                    if not st.session_state.search_completed:
+                        match_results_table = []
                         
-                        # Find match in Sofascore
-                        match = find_match_for_teams(home_team, away_team)
+                        # Search for each match in Sofascore
+                        for i, (idx, home_team, away_team) in enumerate(matches):
+                            status_text.text(f"Searching for {home_team} vs {away_team}...")
+                            
+                            # Find match in Sofascore
+                            match, source = search_for_match(home_team, away_team)
+                            
+                            if match:
+                                # Store match details
+                                st.session_state.match_info[idx]['sofascore_match'] = match
+                                st.session_state.match_info[idx]['result'] = match_to_result_code(match)
+                                st.session_state.match_info[idx]['source'] = source
+                                
+                                # Extract info for display
+                                sofascore_home = match['homeTeam']['name']
+                                sofascore_away = match['awayTeam']['name']
+                                status = match['status']['description']
+                                
+                                # Get scores
+                                home_score = match.get('homeScore', {}).get('current', 0)
+                                away_score = match.get('awayScore', {}).get('current', 0)
+                                score = f"{home_score} - {away_score}"
+                                
+                                result_code = st.session_state.match_info[idx]['result'] if st.session_state.match_info[idx]['result'] else "Pending"
+                                
+                                # Get scheduled date if available
+                                scheduled_date = "N/A"
+                                if 'startTimestamp' in match:
+                                    try:
+                                        scheduled_date = datetime.fromtimestamp(match['startTimestamp']).strftime('%Y-%m-%d %H:%M')
+                                    except:
+                                        pass
+                                
+                                match_results_table.append({
+                                    "Match": f"{home_team} vs {away_team}",
+                                    "Sofascore Match": f"{sofascore_home} vs {sofascore_away}",
+                                    "Status": status,
+                                    "Score": score,
+                                    "Result": result_code,
+                                    "Scheduled Date": scheduled_date,
+                                    "Source": source
+                                })
+                                
+                                status_text.text(f"✅ Found match: {sofascore_home} vs {sofascore_away}")
+                            else:
+                                # Not found
+                                match_results_table.append({
+                                    "Match": f"{home_team} vs {away_team}",
+                                    "Sofascore Match": "Not found",
+                                    "Status": "N/A",
+                                    "Score": "N/A",
+                                    "Result": "N/A",
+                                    "Scheduled Date": "N/A",
+                                    "Source": "Not found"
+                                })
+                                
+                                status_text.text(f"❌ Couldn't find match for {home_team} vs {away_team}")
+                            
+                            # Update progress
+                            progress_bar.progress((i + 1) / len(matches))
+                            time.sleep(0.3)  # Delay to prevent API rate limiting
                         
-                        if match:
-                            # Store match details
-                            match_info[idx]['sofascore_match'] = match
-                            match_info[idx]['result'] = match_to_result_code(match)
-                            
-                            # Extract info for display
-                            sofascore_home = match['homeTeam']['name']
-                            sofascore_away = match['awayTeam']['name']
-                            status = match['status']['description']
-                            
-                            # Get scores
-                            home_score = match.get('homeScore', {}).get('current', 0)
-                            away_score = match.get('awayScore', {}).get('current', 0)
-                            score = f"{home_score} - {away_score}"
-                            
-                            result_code = match_info[idx]['result'] if match_info[idx]['result'] else "Pending"
-                            
-                            match_results_table.append({
-                                "Match": f"{home_team} vs {away_team}",
-                                "Sofascore Match": f"{sofascore_home} vs {sofascore_away}",
-                                "Status": status,
-                                "Score": score,
-                                "Result": result_code
-                            })
-                            
-                            status_text.text(f"✅ Found match: {sofascore_home} vs {sofascore_away}")
-                        else:
-                            # Not found
-                            match_results_table.append({
-                                "Match": f"{home_team} vs {away_team}",
-                                "Sofascore Match": "Not found",
-                                "Status": "N/A",
-                                "Score": "N/A",
-                                "Result": "N/A"
-                            })
-                            
-                            status_text.text(f"❌ Couldn't find match for {home_team} vs {away_team}")
+                        st.session_state.match_results = match_results_table
+                        st.session_state.search_completed = True
                         
-                        # Update progress
-                        progress_bar.progress((i + 1) / len(matches))
-                        time.sleep(0.5)  # Delay to prevent API rate limiting
-                    
                     status_text.text("Finished searching for matches")
                     
                     # Display match results
                     st.subheader("Match Results")
-                    match_results_df = pd.DataFrame(match_results_table)
-                    st.dataframe(match_results_df)
+                    match_results_df = pd.DataFrame(st.session_state.match_results)
+                    
+                    # Allow manual override of results for matches
+                    st.dataframe(match_results_df, use_container_width=True)
+                    
+                    # Manual result override section
+                    st.subheader("Manual Result Override")
+                    st.markdown("If a match wasn't found or has the wrong result, you can manually set it here:")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        # Dropdown to select match
+                        match_options = [f"{i}: {match[1]} vs {match[2]}" for i, match in enumerate(matches)]
+                        selected_match = st.selectbox("Select Match", match_options)
+                        selected_idx = int(selected_match.split(":")[0])
+                        idx, home_team, away_team = matches[selected_idx]
+                    
+                    with col2:
+                        # Input for result
+                        result_options = ["", "L", "E", "V"]
+                        manual_result = st.selectbox("Result (L/E/V)", result_options)
+                    
+                    with col3:
+                        # Button to apply override
+                        if st.button("Apply Override"):
+                            st.session_state.match_info[idx]['result'] = manual_result if manual_result else None
+                            st.session_state.match_info[idx]['source'] = "Manual override"
+                            
+                            # Update the match results table
+                            for i, result in enumerate(st.session_state.match_results):
+                                if result["Match"] == f"{home_team} vs {away_team}":
+                                    st.session_state.match_results[i]["Result"] = manual_result if manual_result else "N/A"
+                                    st.session_state.match_results[i]["Source"] = "Manual override"
+                                    break
+                            
+                            st.success(f"Updated result for {home_team} vs {away_team} to {manual_result}")
+                            # Force rerun to update the display
+                            st.experimental_rerun()
                     
                     # Update the Quiniela results
-                    updated_df = update_quiniela_results(df, match_info)
+                    updated_df = update_quiniela_results(df, st.session_state.match_info)
                     
                     # Display updated Quiniela
                     st.subheader("Updated Quiniela")
@@ -484,6 +646,9 @@ if uploaded_file:
                         refresh_interval = st.slider("Refresh interval (seconds)", 30, 300, 60)
                         st.info(f"This page will refresh every {refresh_interval} seconds")
                         time.sleep(refresh_interval)
+                        
+                        # Reset search completed to force a fresh search
+                        st.session_state.search_completed = False
                         st.experimental_rerun()
         
         with tab2:
@@ -566,7 +731,8 @@ if uploaded_file:
                 st.info("Track matches first to enable export")
     
     except Exception as e:
-        st.error(f"Error processing file: {e}")
+        st.error(f"Error processing file: {str(e)}")
+        st.exception(e)
 else:
     st.info("Please upload your Quiniela CSV or Excel file to get started.")
 
