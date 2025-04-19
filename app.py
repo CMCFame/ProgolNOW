@@ -7,6 +7,7 @@ import pandas as pd
 import time
 import threading
 import os
+import io
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -15,6 +16,7 @@ from data_service import SofascoreDataService
 from quiniela_manager import QuinielaManager, ProgolQuiniela
 from scheduler import QuinielaScheduler, UpdateEvent
 import database as db
+from csv_utils import parse_progol_csv, generate_sample_csv
 from config import COLORS, MATCH_STATUS, UPDATE_INTERVAL, MAX_QUINIELAS_POR_USUARIO, setup_directories, LIGAS_PROGOL
 
 # Configurar página de Streamlit
@@ -192,21 +194,27 @@ def seccion_mis_quinielas():
     if not quinielas:
         st.info("No tienes quinielas registradas.")
     else:
-        # Mostrar lista de quinielas
-        st.subheader(f"Tienes {len(quinielas)} quinielas")
+        # Mostrar en formato de cuadrícula
+        cols = st.columns(3)  # Mostrar 3 quinielas por fila
         
-        for quiniela_info in quinielas:
-            nombre = quiniela_info['nombre']
-            fecha = format_timestamp(quiniela_info['ultima_actualizacion'])
-            
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.markdown(f"**{nombre}** (última actualización: {fecha})")
-            
-            with col2:
-                if st.button("Ver detalle", key=f"btn_ver_{nombre}"):
-                    st.session_state.quiniela_seleccionada = nombre
-                    st.rerun()
+        for i, quiniela_info in enumerate(quinielas):
+            col_idx = i % 3
+            with cols[col_idx]:
+                nombre = quiniela_info['nombre']
+                fecha = format_timestamp(quiniela_info['ultima_actualizacion'])
+                
+                # Crear un contenedor con borde para cada quiniela
+                with st.container():
+                    st.markdown(f"""
+                    <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 10px;">
+                        <h3>{nombre}</h3>
+                        <p>Última actualización: {fecha}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if st.button("Ver detalle", key=f"btn_ver_{nombre}"):
+                        st.session_state.quiniela_seleccionada = nombre
+                        st.rerun()
     
     # Botón para crear nueva quiniela
     if len(quinielas) < MAX_QUINIELAS_POR_USUARIO:
@@ -239,33 +247,69 @@ def seccion_detalle_quiniela(nombre_quiniela: str):
         st.write(f"Fecha de creación: {format_timestamp(quiniela.fecha_creacion)}")
         st.write(f"Última actualización: {format_timestamp(quiniela.ultima_actualizacion)}")
     with col2:
-        st.write(f"Partidos: {len(quiniela.partidos)}")
-        st.write(f"Pronósticos: {len(quiniela.selecciones)} de {len(quiniela.partidos)}")
+        st.write(f"Partidos regulares: {len(quiniela.partidos_regulares)}")
+        st.write(f"Partidos de revancha: {len(quiniela.partidos_revancha)}")
     
     # Obtener resultados actuales
     resultados_actuales = st.session_state.quiniela_manager.obtener_resultados_actuales()
+    resultados_revancha = st.session_state.quiniela_manager.obtener_resultados_actuales(solo_revancha=True)
     
     # Calcular aciertos
-    estadisticas = quiniela.calcular_aciertos(resultados_actuales)
+    estadisticas = quiniela.calcular_aciertos(resultados_actuales, resultados_revancha)
     
     # Mostrar estadísticas
     st.subheader("Estadísticas")
+    
+    # Estadísticas regulares
+    st.markdown("##### Partidos Regulares")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Partidos con resultado", f"{estadisticas['partidos_con_resultado']} / {estadisticas['total_partidos']}")
+        st.metric("Partidos con resultado", f"{estadisticas['regulares_con_resultado']} / {estadisticas['total_regulares']}")
     with col2:
-        st.metric("Aciertos", f"{estadisticas['aciertos']} / {estadisticas['partidos_con_resultado']}")
+        st.metric("Aciertos", f"{estadisticas['aciertos_regulares']} / {estadisticas['regulares_con_resultado']}")
     with col3:
-        st.metric("Porcentaje de aciertos", f"{estadisticas['porcentaje_aciertos']:.1f}%")
+        st.metric("Porcentaje de aciertos", f"{estadisticas['porcentaje_aciertos_regulares']:.1f}%")
+    
+    # Estadísticas revancha
+    if quiniela.partidos_revancha:
+        st.markdown("##### Partidos de Revancha")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Partidos con resultado", f"{estadisticas['revancha_con_resultado']} / {estadisticas['total_revancha']}")
+        with col2:
+            st.metric("Aciertos", f"{estadisticas['aciertos_revancha']} / {estadisticas['revancha_con_resultado']}")
+        with col3:
+            st.metric("Porcentaje de aciertos", f"{estadisticas['porcentaje_aciertos_revancha']:.1f}%")
     
     # Mostrar partidos y pronósticos
-    st.subheader("Partidos y pronósticos")
+    st.subheader("Partidos regulares y pronósticos")
     
-    # Crear DataFrame para mostrar
-    datos_partidos = []
-    for partido in quiniela.partidos:
+    # Tabla para hacer pronósticos
+    st.markdown("##### Partidos regulares (14)")
+    
+    # Crear la tabla con selecciones
+    cols = st.columns([1, 3, 1, 1, 1, 1, 1])
+    with cols[0]:
+        st.markdown("**Fecha**")
+    with cols[1]:
+        st.markdown("**Partido**")
+    with cols[2]:
+        st.markdown("**Estado**")
+    with cols[3]:
+        st.markdown("**Marcador**")
+    with cols[4]:
+        st.markdown("**L**")
+    with cols[5]:
+        st.markdown("**E**")
+    with cols[6]:
+        st.markdown("**V**")
+    
+    # Datos para actualizar
+    selecciones_actualizadas = {}
+    
+    # Mostrar partidos regulares
+    for partido in quiniela.partidos_regulares:
         match_id = partido.get('match_id')
-        # Obtener información actualizada del partido
         match_info = db.get_match_by_id(match_id) or {}
         
         # Determinar estado del partido
@@ -275,33 +319,184 @@ def seccion_detalle_quiniela(nombre_quiniela: str):
         elif match_info.get('is_finished'):
             estado = "Finalizado"
         
-        # Determinar si el pronóstico es correcto
-        pronostico = quiniela.obtener_pronostico(match_id) or "Sin pronóstico"
-        resultado_actual = match_info.get('result', '')
+        # Determinar el pronóstico actual
+        pronostico_actual = quiniela.obtener_pronostico(match_id) or ""
         
-        acierto = None
-        if pronostico != "Sin pronóstico" and resultado_actual:
-            acierto = pronostico == resultado_actual
+        # Preparar la fecha para mostrar
+        fecha_str = "Programado"
+        try:
+            fecha_obj = datetime.fromisoformat(partido.get('scheduled_time', ''))
+            fecha_str = fecha_obj.strftime("%d/%m %H:%M")
+        except:
+            pass
         
-        datos_partidos.append({
-            'ID': match_id,
-            'Partido': f"{partido.get('home_team', '')} vs {partido.get('away_team', '')}",
-            'Liga': partido.get('league', ''),
-            'Estado': estado,
-            'Marcador': f"{match_info.get('home_score', '-')} - {match_info.get('away_score', '-')}" if match_info else "-",
-            'Resultado': resultado_actual,
-            'Pronóstico': pronostico,
-            'Acierto': "✅" if acierto == True else ("❌" if acierto == False else "")
-        })
+        # Mostrar fila de partido
+        cols = st.columns([1, 3, 1, 1, 1, 1, 1])
+        with cols[0]:
+            st.text(fecha_str)
+        with cols[1]:
+            st.text(f"{partido.get('home_team', '')} vs {partido.get('away_team', '')}")
+        with cols[2]:
+            st.text(estado)
+        with cols[3]:
+            marcador = f"{match_info.get('home_score', '-')} - {match_info.get('away_score', '-')}" if match_info else "-"
+            st.text(marcador)
+            
+        # Radio buttons para selección
+        seleccion_key = f"sel_{match_id}"
+        col4, col5, col6 = cols[4], cols[5], cols[6]
+        
+        # Usar columnas individuales en lugar de radio button para controlar mejor la apariencia
+        with col4:
+            local = st.checkbox("", value=pronostico_actual == "L", key=f"L_{match_id}", disabled=estado=="Finalizado")
+        with col5:
+            empate = st.checkbox("", value=pronostico_actual == "E", key=f"E_{match_id}", disabled=estado=="Finalizado")
+        with col6:
+            visitante = st.checkbox("", value=pronostico_actual == "V", key=f"V_{match_id}", disabled=estado=="Finalizado")
+        
+        # Lógica para asegurar que solo una opción esté seleccionada
+        if local and not (pronostico_actual == "L"):
+            selecciones_actualizadas[match_id] = "L"
+            # Desactivar las otras opciones
+            st.session_state[f"E_{match_id}"] = False
+            st.session_state[f"V_{match_id}"] = False
+        elif empate and not (pronostico_actual == "E"):
+            selecciones_actualizadas[match_id] = "E"
+            st.session_state[f"L_{match_id}"] = False
+            st.session_state[f"V_{match_id}"] = False
+        elif visitante and not (pronostico_actual == "V"):
+            selecciones_actualizadas[match_id] = "V"
+            st.session_state[f"L_{match_id}"] = False
+            st.session_state[f"E_{match_id}"] = False
+        elif not (local or empate or visitante) and pronostico_actual:
+            # Si se desactivaron todas, limpiar el pronóstico
+            selecciones_actualizadas[match_id] = None
     
-    # Mostrar tabla
-    if datos_partidos:
-        df = pd.DataFrame(datos_partidos)
-        st.dataframe(df, hide_index=True, use_container_width=True)
-    else:
-        st.info("No hay partidos en esta quiniela.")
+    # Sección de partidos de revancha, si existen
+    if quiniela.partidos_revancha:
+        st.subheader("Partidos de revancha")
+        
+        # Crear la tabla para partidos de revancha
+        cols = st.columns([1, 3, 1, 1, 1, 1, 1])
+        with cols[0]:
+            st.markdown("**Fecha**")
+        with cols[1]:
+            st.markdown("**Partido**")
+        with cols[2]:
+            st.markdown("**Estado**")
+        with cols[3]:
+            st.markdown("**Marcador**")
+        with cols[4]:
+            st.markdown("**L**")
+        with cols[5]:
+            st.markdown("**E**")
+        with cols[6]:
+            st.markdown("**V**")
+        
+        # Diccionario para almacenar selecciones de revancha
+        selecciones_revancha_actualizadas = {}
+        
+        # Mostrar partidos de revancha
+        for partido in quiniela.partidos_revancha:
+            match_id = partido.get('match_id')
+            match_info = db.get_match_by_id(match_id) or {}
+            
+            # Determinar estado del partido
+            estado = "No iniciado"
+            if match_info.get('is_live'):
+                estado = "En vivo"
+            elif match_info.get('is_finished'):
+                estado = "Finalizado"
+            
+            # Determinar el pronóstico actual
+            pronostico_actual = quiniela.obtener_pronostico(match_id, es_revancha=True) or ""
+            
+            # Preparar la fecha para mostrar
+            fecha_str = "Programado"
+            try:
+                fecha_obj = datetime.fromisoformat(partido.get('scheduled_time', ''))
+                fecha_str = fecha_obj.strftime("%d/%m %H:%M")
+            except:
+                pass
+            
+            # Mostrar fila de partido
+            cols = st.columns([1, 3, 1, 1, 1, 1, 1])
+            with cols[0]:
+                st.text(fecha_str)
+            with cols[1]:
+                st.text(f"{partido.get('home_team', '')} vs {partido.get('away_team', '')}")
+            with cols[2]:
+                st.text(estado)
+            with cols[3]:
+                marcador = f"{match_info.get('home_score', '-')} - {match_info.get('away_score', '-')}" if match_info else "-"
+                st.text(marcador)
+                
+            # Checkboxes para selección (revancha)
+            col4, col5, col6 = cols[4], cols[5], cols[6]
+            
+            with col4:
+                local = st.checkbox("", value=pronostico_actual == "L", key=f"LR_{match_id}", disabled=estado=="Finalizado")
+            with col5:
+                empate = st.checkbox("", value=pronostico_actual == "E", key=f"ER_{match_id}", disabled=estado=="Finalizado")
+            with col6:
+                visitante = st.checkbox("", value=pronostico_actual == "V", key=f"VR_{match_id}", disabled=estado=="Finalizado")
+            
+            # Lógica para asegurar que solo una opción esté seleccionada
+            if local and not (pronostico_actual == "L"):
+                selecciones_revancha_actualizadas[match_id] = "L"
+                # Desactivar las otras opciones
+                st.session_state[f"ER_{match_id}"] = False
+                st.session_state[f"VR_{match_id}"] = False
+            elif empate and not (pronostico_actual == "E"):
+                selecciones_revancha_actualizadas[match_id] = "E"
+                st.session_state[f"LR_{match_id}"] = False
+                st.session_state[f"VR_{match_id}"] = False
+            elif visitante and not (pronostico_actual == "V"):
+                selecciones_revancha_actualizadas[match_id] = "V"
+                st.session_state[f"LR_{match_id}"] = False
+                st.session_state[f"ER_{match_id}"] = False
+            elif not (local or empate or visitante) and pronostico_actual:
+                # Si se desactivaron todas, limpiar el pronóstico
+                selecciones_revancha_actualizadas[match_id] = None
     
-    # Botón para eliminar
+    # Botón para guardar pronósticos
+    cambios_realizados = False
+    
+    # Verificar si hay cambios en los pronósticos regulares
+    if selecciones_actualizadas:
+        for match_id, resultado in selecciones_actualizadas.items():
+            try:
+                if resultado is None:
+                    # Implementar la funcionalidad para borrar un pronóstico si es necesario
+                    pass
+                else:
+                    quiniela.establecer_pronostico(match_id, resultado)
+                    cambios_realizados = True
+            except Exception as e:
+                st.error(f"Error al establecer pronóstico: {e}")
+    
+    # Verificar si hay cambios en los pronósticos de revancha
+    if quiniela.partidos_revancha and selecciones_revancha_actualizadas:
+        for match_id, resultado in selecciones_revancha_actualizadas.items():
+            try:
+                if resultado is None:
+                    # Implementar la funcionalidad para borrar un pronóstico si es necesario
+                    pass
+                else:
+                    quiniela.establecer_pronostico(match_id, resultado, es_revancha=True)
+                    cambios_realizados = True
+            except Exception as e:
+                st.error(f"Error al establecer pronóstico de revancha: {e}")
+    
+    # Si hubo cambios, guardar la quiniela actualizada
+    if cambios_realizados:
+        try:
+            db.save_quiniela(quiniela.to_dict())
+            st.success("Pronósticos guardados correctamente")
+        except Exception as e:
+            st.error(f"Error al guardar quiniela: {e}")
+    
+    # Botón para eliminar la quiniela
     with st.expander("Opciones avanzadas"):
         if st.button("🗑️ Eliminar esta quiniela", key=f"btn_eliminar_{nombre_quiniela}"):
             if st.session_state.get("confirmar_eliminar") == nombre_quiniela:
@@ -326,29 +521,130 @@ def seccion_crear_quiniela():
         st.session_state.pop("creando_quiniela", None)
         st.rerun()
     
-    # Formulario para crear quiniela
-    with st.form("form_crear_quiniela"):
-        nombre = st.text_input("Nombre de la quiniela", placeholder="Ej: Mi Quiniela Semana 15")
+    # Dos métodos para crear quiniela: manual o mediante archivo CSV
+    metodo = st.radio(
+        "Método para crear quiniela", 
+        ["Cargar desde archivo CSV", "Ingresar manualmente"],
+        horizontal=True
+    )
+    
+    if metodo == "Cargar desde archivo CSV":
+        st.subheader("Cargar partidos desde archivo CSV")
         
-        # Sección para ingresar partidos manualmente
-        st.subheader("Ingresa los partidos para tu quiniela")
-        
-        # Opciones de añadir partidos
-        add_method = st.radio(
-            "Método para añadir partidos", 
-            ["Ingresar manualmente", "Buscar partidos"], 
-            horizontal=True
-        )
-        
-        partidos_seleccionados = []
-        
-        if add_method == "Ingresar manualmente":
-            # Crear campos para agregar partidos
-            num_partidos = st.number_input("Número de partidos", min_value=1, max_value=14, value=9)
+        # Mostrar instrucciones y formato
+        with st.expander("Instrucciones y formato del archivo CSV", expanded=True):
+            st.markdown("""
+            ### Formato del archivo CSV
+            El archivo CSV debe tener los siguientes campos:
             
-            for i in range(int(num_partidos)):
+            - **fecha**: Fecha del partido en formato YYYY-MM-DD
+            - **hora**: Hora del partido en formato HH:MM
+            - **local**: Nombre del equipo local
+            - **visitante**: Nombre del equipo visitante
+            - **liga**: Liga del partido (debe ser una de las ligas soportadas)
+            - **revancha**: 1 para partidos de revancha, 0 para partidos regulares
+            
+            Los primeros 14 partidos regulares (revancha=0) serán considerados para la quiniela regular.
+            Los siguientes partidos con revancha=1 (máximo 7) se considerarán para la quiniela de revancha.
+            """)
+            
+            # Botón para descargar plantilla
+            sample_csv = generate_sample_csv()
+            st.download_button(
+                "📄 Descargar plantilla CSV",
+                data=sample_csv,
+                file_name="partidos_progol_plantilla.csv",
+                mime="text/csv"
+            )
+        
+        # Opción para cargar archivo CSV
+        uploaded_file = st.file_uploader("Selecciona un archivo CSV", type=["csv"])
+        
+        # Procesar archivo
+        partidos_regulares = []
+        partidos_revancha = []
+        
+        if uploaded_file:
+            try:
+                # Leer el contenido del archivo
+                csv_content = uploaded_file.read().decode('utf-8')
+                
+                # Parsear el CSV
+                partidos_regulares, partidos_revancha = parse_progol_csv(csv_content)
+                
+                st.success(f"Archivo cargado correctamente. Se encontraron {len(partidos_regulares)} partidos regulares y {len(partidos_revancha)} partidos de revancha.")
+                
+                # Mostrar resumen
+                st.subheader("Resumen de partidos")
+                
+                # Mostrar partidos regulares
+                st.markdown("##### Partidos regulares")
+                for i, partido in enumerate(partidos_regulares):
+                    st.markdown(f"{i+1}. {partido['home_team']} vs {partido['away_team']} ({partido['league']})")
+                
+                # Mostrar partidos de revancha
+                if partidos_revancha:
+                    st.markdown("##### Partidos de revancha")
+                    for i, partido in enumerate(partidos_revancha):
+                        st.markdown(f"{i+1}. {partido['home_team']} vs {partido['away_team']} ({partido['league']})")
+                
+            except Exception as e:
+                st.error(f"Error al procesar el archivo CSV: {str(e)}")
+                partidos_regulares = []
+                partidos_revancha = []
+        
+        # Formulario para completar la creación
+        with st.form("form_crear_quiniela_csv"):
+            nombre = st.text_input("Nombre de la quiniela", placeholder="Ej: Progol 3480")
+            
+            # Botón para crear
+            submitted = st.form_submit_button("Crear quiniela")
+            
+            if submitted:
+                if not nombre:
+                    st.error("Debes proporcionar un nombre para la quiniela.")
+                elif not partidos_regulares:
+                    st.error("Debes cargar un archivo CSV válido con partidos.")
+                else:
+                    # Verificar si ya existe
+                    quinielas = db.list_quinielas()
+                    if nombre in [q['nombre'] for q in quinielas]:
+                        st.error(f"Ya existe una quiniela con el nombre '{nombre}'.")
+                    else:
+                        # Crear quiniela
+                        try:
+                            quiniela = st.session_state.quiniela_manager.crear_quiniela(
+                                nombre, 
+                                partidos_regulares, 
+                                partidos_revancha
+                            )
+                            
+                            # Guardar en la base de datos
+                            db.save_quiniela(quiniela.to_dict())
+                            
+                            st.success(f"Quiniela '{nombre}' creada correctamente con {len(partidos_regulares)} partidos regulares y {len(partidos_revancha)} partidos de revancha.")
+                            
+                            # Volver a la lista y mostrar la quiniela creada
+                            st.session_state.pop("creando_quiniela", None)
+                            st.session_state.quiniela_seleccionada = nombre
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al crear la quiniela: {e}")
+    
+    else:  # Método manual
+        st.subheader("Ingresar partidos manualmente")
+        
+        # Formulario para crear quiniela
+        with st.form("form_crear_quiniela_manual"):
+            nombre = st.text_input("Nombre de la quiniela", placeholder="Ej: Progol 3480")
+            
+            # Sección para partidos regulares
+            st.markdown("### Partidos regulares (14)")
+            
+            partidos_regulares = []
+            for i in range(14):  # Exactamente 14 partidos regulares
                 st.markdown(f"#### Partido {i+1}")
-                col1, col2, col3 = st.columns([3, 1, 3])
+                col1,col1, col2, col3 = st.columns([3, 1, 3])
                 
                 with col1:
                     equipo_local = st.text_input(f"Equipo Local #{i+1}", key=f"local_{i}")
@@ -359,143 +655,115 @@ def seccion_crear_quiniela():
                 with col3:
                     equipo_visitante = st.text_input(f"Equipo Visitante #{i+1}", key=f"visitante_{i}")
                 
-                liga = st.selectbox(f"Liga del Partido #{i+1}", options=list(LIGAS_PROGOL.keys()), key=f"liga_{i}")
+                col4, col5 = st.columns(2)
+                with col4:
+                    liga = st.selectbox(f"Liga #{i+1}", options=list(LIGAS_PROGOL.keys()), key=f"liga_{i}")
                 
-                # Añadir partido si se han ingresado ambos equipos
+                with col5:
+                    fecha_hora = st.text_input(f"Fecha y hora (YYYY-MM-DD HH:MM)", key=f"fecha_{i}", placeholder="2025-04-20 19:00")
+                
+                # Añadir partido si se han ingresado datos
                 if equipo_local and equipo_visitante:
+                    try:
+                        fecha_obj = datetime.strptime(fecha_hora, "%Y-%m-%d %H:%M") if fecha_hora else datetime.now()
+                        fecha_iso = fecha_obj.isoformat()
+                    except ValueError:
+                        fecha_iso = datetime.now().isoformat()
+                    
                     partido = {
                         'match_id': 1000000 + i,  # ID temporal para identificar el partido
                         'home_team': equipo_local,
                         'away_team': equipo_visitante,
                         'league': liga,
-                        'scheduled_time': datetime.now().isoformat()
+                        'scheduled_time': fecha_iso,
+                        'is_revancha': False
                     }
-                    partidos_seleccionados.append(partido)
-        else:  # Buscar partidos
-            st.markdown("##### Búsqueda de partidos")
-            st.markdown("Ingresa los equipos para buscar partidos en SofaScore.")
+                    partidos_regulares.append(partido)
             
-            # Opción para actualizar IDs
-            st.info("Si no encuentras un partido, intenta actualizar los IDs de las ligas y temporadas.")
-            actualizar_ids = st.checkbox("Actualizar IDs de ligas y temporadas", value=False)
+            # Sección para partidos de revancha (opcional)
+            st.markdown("### Partidos de revancha (opcional, máximo 7)")
+            incluir_revancha = st.checkbox("Incluir partidos de revancha", value=False)
             
-            if actualizar_ids:
-                with st.spinner("Actualizando IDs de ligas y temporadas..."):
-                    updated = st.session_state.data_service.update_league_ids()
-                    if updated:
-                        st.success("IDs actualizados correctamente")
-                    else:
-                        st.warning("No se pudieron actualizar algunos IDs. Intenta más tarde.")
-            
-            # Agregar partidos mediante búsqueda individual
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                equipo_local_busqueda = st.text_input("Equipo Local", key="local_search")
-            with col2:
-                equipo_visitante_busqueda = st.text_input("Equipo Visitante", key="away_search")
-            
-            buscar_partido = st.checkbox("Buscar este partido", key="search_match")
-            
-            if buscar_partido and equipo_local_busqueda and equipo_visitante_busqueda:
-                with st.spinner(f"Buscando partido {equipo_local_busqueda} vs {equipo_visitante_busqueda}..."):
-                    match = st.session_state.data_service.search_match(equipo_local_busqueda, equipo_visitante_busqueda)
+            partidos_revancha = []
+            if incluir_revancha:
+                num_revancha = st.slider("Número de partidos de revancha", min_value=1, max_value=7, value=7)
+                
+                for i in range(num_revancha):
+                    st.markdown(f"#### Partido de revancha {i+1}")
+                    col1, col2, col3 = st.columns([3, 1, 3])
                     
-                    if match:
-                        match_id = match.get('id')
-                        home_team = match.get('homeTeam', {}).get('name', '')
-                        away_team = match.get('awayTeam', {}).get('name', '')
-                        league = match.get('tournament', {}).get('name', '')
-                        
-                        st.success(f"¡Partido encontrado! {home_team} vs {away_team} ({league})")
-                        agregar_partido = st.checkbox(f"Agregar {home_team} vs {away_team}", value=True)
-                        
-                        if agregar_partido:
-                            partido = {
-                                'match_id': match_id,
-                                'home_team': home_team,
-                                'away_team': away_team,
-                                'league': league,
-                                'scheduled_time': datetime.fromtimestamp(match.get('startTimestamp', 0)).isoformat()
-                            }
-                            partidos_seleccionados.append(partido)
-                    else:
-                        st.error(f"No se encontró ningún partido para {equipo_local_busqueda} vs {equipo_visitante_busqueda}")
-            
-            # Opción para buscar partidos próximos
-            st.markdown("##### O busca entre los próximos partidos")
-            buscar_proximos = st.checkbox("Buscar próximos partidos", key="search_upcoming")
-            
-            if buscar_proximos:
-                dias_adelante = st.slider("Días a buscar", min_value=1, max_value=14, value=7)
-                liga_filtro = st.multiselect("Filtrar por ligas", options=list(LIGAS_PROGOL.keys()), default=[])
-                
-                with st.spinner(f"Buscando próximos partidos para los próximos {dias_adelante} días..."):
-                    proximos_partidos = st.session_state.data_service.get_upcoming_matches(days_ahead=dias_adelante)
+                    with col1:
+                        equipo_local = st.text_input(f"Equipo Local Revancha #{i+1}", key=f"local_r_{i}")
                     
-                    if proximos_partidos:
-                        # Filtrar por ligas si es necesario
-                        if liga_filtro:
-                            ligas_a_buscar = [LIGAS_PROGOL[liga] for liga in liga_filtro]
-                            proximos_partidos = [p for p in proximos_partidos if p.get('league') in ligas_a_buscar]
+                    with col2:
+                        st.markdown("<p style='text-align: center; margin-top: 30px;'>vs</p>", unsafe_allow_html=True)
+                    
+                    with col3:
+                        equipo_visitante = st.text_input(f"Equipo Visitante Revancha #{i+1}", key=f"visitante_r_{i}")
+                    
+                    col4, col5 = st.columns(2)
+                    with col4:
+                        liga = st.selectbox(f"Liga Revancha #{i+1}", options=list(LIGAS_PROGOL.keys()), key=f"liga_r_{i}")
+                    
+                    with col5:
+                        fecha_hora = st.text_input(f"Fecha y hora (YYYY-MM-DD HH:MM)", key=f"fecha_r_{i}", placeholder="2025-04-20 19:00")
+                    
+                    # Añadir partido si se han ingresado datos
+                    if equipo_local and equipo_visitante:
+                        try:
+                            fecha_obj = datetime.strptime(fecha_hora, "%Y-%m-%d %H:%M") if fecha_hora else datetime.now()
+                            fecha_iso = fecha_obj.isoformat()
+                        except ValueError:
+                            fecha_iso = datetime.now().isoformat()
                         
-                        st.success(f"Se encontraron {len(proximos_partidos)} partidos")
-                        
-                        # Mostrar partidos para seleccionar
-                        for idx, partido in enumerate(proximos_partidos):
-                            home = partido.get('home_team', '')
-                            away = partido.get('away_team', '')
-                            league = partido.get('league', '')
-                            
-                            try:
-                                fecha = datetime.fromisoformat(partido.get('scheduled_time')).strftime("%d/%m/%Y %H:%M")
-                            except:
-                                fecha = "Fecha desconocida"
-                            
-                            agregar = st.checkbox(f"{home} vs {away} ({league}) - {fecha}", key=f"add_match_{idx}")
-                            
-                            if agregar:
-                                partidos_seleccionados.append(partido)
-                    else:
-                        st.warning("No se encontraron próximos partidos")
-        
-        # Mostrar resumen de partidos seleccionados
-        if partidos_seleccionados:
-            st.subheader(f"Partidos seleccionados ({len(partidos_seleccionados)})")
-            for idx, partido in enumerate(partidos_seleccionados):
-                st.markdown(f"- {partido.get('home_team', '')} vs {partido.get('away_team', '')} ({partido.get('league', '')})")
-        
-        # Botón para crear
-        submitted = st.form_submit_button("Crear quiniela")
-        
-        if submitted:
-            if not nombre:
-                st.error("Debes proporcionar un nombre para la quiniela.")
-                return
+                        partido = {
+                            'match_id': 2000000 + i,  # ID temporal para identificar el partido
+                            'home_team': equipo_local,
+                            'away_team': equipo_visitante,
+                            'league': liga,
+                            'scheduled_time': fecha_iso,
+                            'is_revancha': True
+                        }
+                        partidos_revancha.append(partido)
             
-            # Verificar si ya existe
-            quinielas = db.list_quinielas()
-            if nombre in [q['nombre'] for q in quinielas]:
-                st.error(f"Ya existe una quiniela con el nombre '{nombre}'.")
-                return
+            # Botón para crear
+            submitted = st.form_submit_button("Crear quiniela")
             
-            if not partidos_seleccionados:
-                st.error("Debes ingresar al menos un partido.")
-                return
-            
-            # Crear quiniela
-            try:
-                quiniela = st.session_state.quiniela_manager.crear_quiniela(nombre, partidos_seleccionados)
-                st.success(f"Quiniela '{nombre}' creada correctamente con {len(partidos_seleccionados)} partidos.")
+            if submitted:
+                if not nombre:
+                    st.error("Debes proporcionar un nombre para la quiniela.")
+                    return
                 
-                # Guardar en la base de datos
-                db.save_quiniela(quiniela.to_dict())
+                # Verificar cantidad de partidos
+                if len(partidos_regulares) != 14:
+                    st.error(f"Se requieren exactamente 14 partidos regulares. Has ingresado {len(partidos_regulares)}.")
+                    return
                 
-                # Volver a la lista
-                st.session_state.pop("creando_quiniela", None)
-                st.session_state.quiniela_seleccionada = nombre
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error al crear la quiniela: {e}")
+                # Verificar si ya existe
+                quinielas = db.list_quinielas()
+                if nombre in [q['nombre'] for q in quinielas]:
+                    st.error(f"Ya existe una quiniela con el nombre '{nombre}'.")
+                    return
+                
+                # Crear quiniela
+                try:
+                    quiniela = st.session_state.quiniela_manager.crear_quiniela(
+                        nombre, 
+                        partidos_regulares, 
+                        partidos_revancha if incluir_revancha else []
+                    )
+                    
+                    # Guardar en la base de datos
+                    db.save_quiniela(quiniela.to_dict())
+                    
+                    st.success(f"Quiniela '{nombre}' creada correctamente con {len(partidos_regulares)} partidos regulares y {len(partidos_revancha) if incluir_revancha else 0} partidos de revancha.")
+                    
+                    # Volver a la lista y mostrar la quiniela creada
+                    st.session_state.pop("creando_quiniela", None)
+                    st.session_state.quiniela_seleccionada = nombre
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al crear la quiniela: {e}")
 
 def seccion_notificaciones():
     """Muestra las notificaciones del sistema."""
@@ -541,11 +809,13 @@ def handle_scheduler_event(event: UpdateEvent):
         
         old_result = change_data.get('resultado_anterior', '')
         new_result = change_data.get('resultado_nuevo', '')
+        es_revancha = change_data.get('es_revancha', False)
         
         old_result_text = MATCH_STATUS.get(old_result, {}).get('text', old_result)
         new_result_text = MATCH_STATUS.get(new_result, {}).get('text', new_result)
         
-        mensaje = f"Cambio en {home_team} vs {away_team}: {home_score}-{away_score}. {old_result_text} → {new_result_text}"
+        revancha_text = " (Revancha)" if es_revancha else ""
+        mensaje = f"Cambio en {home_team} vs {away_team}{revancha_text}: {home_score}-{away_score}. {old_result_text} → {new_result_text}"
         
         # Añadir notificación
         add_notification('success', mensaje, event.timestamp)
