@@ -5,6 +5,9 @@ Obtiene datos de partidos de fútbol desde SofaScore usando requests.
 import time
 import requests
 import random
+import json
+import os
+import tempfile
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -21,38 +24,42 @@ LIGAS_PROGOL = {
     "Liga MX": "Liga MX",
     "Liga Expansion MX": "Liga Expansion MX",
     "Liga Femenil MX": "Liga Femenil MX",
-    "EPL": "EPL",
+    "EPL": "Premier League",
     "Serie A": "Serie A",
     "Bundesliga": "Bundesliga",
     "Eredivisie": "Eredivisie",
     "Ligue 1": "Ligue 1",
-    "Liga NOS": "Liga NOS",
+    "Liga NOS": "Primeira Liga",
     "Argentina Liga Profesional": "Argentina Liga Profesional",
     "Brasileirao": "Brasileirao",
     "MLS": "MLS",
-    "Liga Chilena": "Liga Chilena",
-    "Liga Belga": "Liga Belga",
-    "RFPL": "RFPL"
+    "Liga Chilena": "Primera División de Chile",
+    "Liga Belga": "Jupiler Pro League",
+    "RFPL": "Premier League Rusa"
 }
 
-# IDs de ligas en SofaScore
-LEAGUE_IDS = {
-    "Liga MX": 52,  # Liga MX
-    "Liga Expansion MX": 40378,  # Liga Expansion MX
-    "Liga Femenil MX": 16931,  # Liga MX Femenil
-    "EPL": 17,  # Premier League
-    "Serie A": 23,  # Serie A
-    "Bundesliga": 35,  # Bundesliga
-    "Eredivisie": 37,  # Eredivisie
-    "Ligue 1": 34,  # Ligue 1
-    "Liga NOS": 238,  # Primeira Liga
-    "Argentina Liga Profesional": 155,  # Argentina Liga Profesional
-    "Brasileirao": 325,  # Brasileirao
-    "MLS": 242,  # MLS
-    "Liga Chilena": 127,  # Primera División de Chile
-    "Liga Belga": 38,  # Jupiler Pro League
-    "RFPL": 203  # Premier League Rusa
+# Inicialización básica de IDs de ligas (pueden ser actualizados dinámicamente)
+# Estos valores son solo para inicialización en caso de que no se puedan descubrir automáticamente
+DEFAULT_LEAGUE_IDS = {
+    "Liga MX": 52,
+    "Liga Expansion MX": 40378,
+    "Liga Femenil MX": 16931,
+    "Premier League": 17,
+    "Serie A": 23,
+    "Bundesliga": 35,
+    "Eredivisie": 37,
+    "Ligue 1": 34,
+    "Primeira Liga": 238,
+    "Argentina Liga Profesional": 155,
+    "Brasileirao": 325,
+    "MLS": 242,
+    "Primera División de Chile": 127,
+    "Jupiler Pro League": 38,
+    "Premier League Rusa": 203
 }
+
+# Archivo para guardar los IDs actualizados de ligas y temporadas
+CACHE_FILE = os.path.join(tempfile.gettempdir(), "sofascore_ids_cache.json")
 
 class SofascoreDataService:
     """Servicio para obtener y procesar datos de partidos desde SofaScore."""
@@ -73,6 +80,38 @@ class SofascoreDataService:
             "Referer": "https://www.sofascore.com/"
         }
         
+        # Cargar IDs de ligas y temporadas desde caché si existe
+        self.league_ids = self._load_cache("league_ids") or DEFAULT_LEAGUE_IDS.copy()
+        self.season_ids = self._load_cache("season_ids") or {}
+        
+        # Actualizar IDs de ligas automáticamente al inicio
+        self.update_league_ids()
+    
+    def _load_cache(self, key: str) -> Dict:
+        """Carga datos de caché del archivo."""
+        try:
+            if os.path.exists(CACHE_FILE):
+                with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get(key, {})
+        except Exception as e:
+            print(f"Error al cargar caché: {e}")
+        return {}
+    
+    def _save_cache(self) -> None:
+        """Guarda IDs de ligas y temporadas en un archivo de caché."""
+        try:
+            data = {
+                "league_ids": self.league_ids,
+                "season_ids": self.season_ids,
+                "updated_at": datetime.now().isoformat()
+            }
+            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error al guardar caché: {e}")
+    
     def _get_random_user_agent(self):
         """Obtiene un User-Agent aleatorio para evitar restricciones."""
         return random.choice(USER_AGENTS)
@@ -106,21 +145,89 @@ class SofascoreDataService:
         
         return None
     
+    def update_league_ids(self) -> bool:
+        """
+        Actualiza los IDs de las ligas buscando nombres conocidos en SofaScore.
+        
+        Returns:
+            True si se actualizaron con éxito, False en caso contrario
+        """
+        try:
+            # Buscar cada liga y encontrar su ID actual
+            updated = False
+            
+            for internal_name, display_name in LIGAS_PROGOL.items():
+                # Realizar búsqueda por nombre de liga
+                search_url = f"https://api.sofascore.com/api/v1/search/tournaments/{display_name}"
+                data = self._make_request(search_url)
+                
+                if not data or 'tournaments' not in data:
+                    continue
+                
+                # Buscar la mejor coincidencia
+                for tournament in data['tournaments']:
+                    if tournament.get('name', '').lower() == display_name.lower() or \
+                       tournament.get('name', '').lower() in display_name.lower() or \
+                       display_name.lower() in tournament.get('name', '').lower():
+                        
+                        tournament_id = tournament.get('id')
+                        if tournament_id:
+                            # Verificar que el ID funciona obteniendo las temporadas
+                            test_url = f"https://api.sofascore.com/api/v1/unique-tournament/{tournament_id}/seasons"
+                            test_data = self._make_request(test_url)
+                            
+                            if test_data and 'seasons' in test_data and len(test_data['seasons']) > 0:
+                                # Actualizar el ID de la liga
+                                self.league_ids[display_name] = tournament_id
+                                updated = True
+                                print(f"ID actualizado para {display_name}: {tournament_id}")
+                                break
+            
+            if updated:
+                self._save_cache()
+                return True
+            
+            return False
+        except Exception as e:
+            print(f"Error al actualizar IDs de ligas: {e}")
+            return False
+    
     def get_season_id(self, league: str) -> Optional[int]:
         """
         Obtiene el ID de la temporada actual para una liga.
         
         Args:
-            league: Nombre de la liga
+            league: Nombre de la liga (debe ser el nombre interno usado en LIGAS_PROGOL)
             
         Returns:
             ID de la temporada o None si no se encuentra
         """
-        if league not in LEAGUE_IDS:
+        if league not in LIGAS_PROGOL:
             print(f"Liga {league} no soportada")
             return None
         
-        league_id = LEAGUE_IDS[league]
+        display_name = LIGAS_PROGOL[league]
+        
+        # Comprobar si tenemos el ID en caché y es reciente (menos de 1 día)
+        cache_key = f"{display_name}_{self.current_year}"
+        if cache_key in self.season_ids:
+            cache_timestamp = self.season_ids.get(f"{cache_key}_timestamp", "")
+            if cache_timestamp:
+                try:
+                    cached_time = datetime.fromisoformat(cache_timestamp)
+                    if (datetime.now() - cached_time).total_seconds() < 86400:  # 24 horas
+                        return self.season_ids[cache_key]
+                except:
+                    pass
+        
+        # Si no tenemos el ID de la liga, intentar actualizarlo
+        if display_name not in self.league_ids:
+            self.update_league_ids()
+            if display_name not in self.league_ids:
+                print(f"No se pudo obtener ID para {display_name}")
+                return None
+        
+        league_id = self.league_ids[display_name]
         url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
         
         data = self._make_request(url)
@@ -129,13 +236,30 @@ class SofascoreDataService:
         
         # Buscar la temporada actual o la más reciente
         seasons = data["seasons"]
-        for season in seasons:
-            if str(season["year"]) == self.current_year:
-                return season["id"]
+        target_year = self.current_year
         
-        # Si no se encuentra la temporada del año actual, usar la más reciente
+        # Buscar coincidencia exacta primero
+        for season in seasons:
+            if str(season.get("year")) == target_year:
+                season_id = season.get("id")
+                # Guardar en caché
+                self.season_ids[cache_key] = season_id
+                self.season_ids[f"{cache_key}_timestamp"] = datetime.now().isoformat()
+                self._save_cache()
+                return season_id
+        
+        # Si no hay coincidencia exacta, usar la temporada más reciente
         if seasons:
-            return seasons[0]["id"]
+            # Ordenar por año de forma descendente
+            seasons_sorted = sorted(seasons, key=lambda x: x.get("year", 0), reverse=True)
+            season_id = seasons_sorted[0].get("id")
+            
+            # Guardar en caché
+            self.season_ids[cache_key] = season_id
+            self.season_ids[f"{cache_key}_timestamp"] = datetime.now().isoformat()
+            self._save_cache()
+            
+            return season_id
         
         return None
     
@@ -144,12 +268,12 @@ class SofascoreDataService:
         Obtiene todos los partidos de una liga para la temporada actual.
         
         Args:
-            league: Nombre de la liga
+            league: Nombre de la liga (debe ser el nombre interno usado en LIGAS_PROGOL)
             
         Returns:
             Lista de diccionarios con información de partidos
         """
-        if league not in LEAGUE_IDS:
+        if league not in LIGAS_PROGOL:
             print(f"Liga {league} no soportada")
             return []
         
@@ -158,14 +282,57 @@ class SofascoreDataService:
             print(f"No se pudo obtener ID de temporada para {league}")
             return []
         
-        league_id = LEAGUE_IDS[league]
-        url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/events"
+        display_name = LIGAS_PROGOL[league]
+        if display_name not in self.league_ids:
+            self.update_league_ids()
+            if display_name not in self.league_ids:
+                return []
         
-        data = self._make_request(url)
-        if not data or "events" not in data:
-            return []
+        league_id = self.league_ids[display_name]
         
-        return data["events"]
+        # Primero intentamos obtener eventos futuros
+        future_url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/events/next/0"
+        future_data = self._make_request(future_url)
+        future_events = future_data.get('events', []) if future_data else []
+        
+        # Luego obtenemos eventos pasados
+        past_url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/events/last/0"
+        past_data = self._make_request(past_url)
+        past_events = past_data.get('events', []) if past_data else []
+        
+        # Combinar todos los eventos
+        all_events = past_events + future_events
+        
+        return all_events
+    
+    def search_match(self, home_team: str, away_team: str) -> Optional[Dict[str, Any]]:
+        """
+        Busca un partido específico por nombres de equipos.
+        
+        Args:
+            home_team: Nombre del equipo local
+            away_team: Nombre del equipo visitante
+            
+        Returns:
+            Diccionario con información del partido o None si no se encuentra
+        """
+        # Buscar en todas las ligas soportadas
+        for league in LIGAS_PROGOL.keys():
+            matches = self.get_league_matches(league)
+            
+            for match in matches:
+                match_home = match.get('homeTeam', {}).get('name', '').lower()
+                match_away = match.get('awayTeam', {}).get('name', '').lower()
+                
+                home_search = home_team.lower()
+                away_search = away_team.lower()
+                
+                # Comprobar coincidencias exactas y parciales
+                if ((home_search in match_home or match_home in home_search) and 
+                    (away_search in match_away or match_away in away_search)):
+                    return match
+        
+        return None
     
     def get_match_dict(self, match_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -226,6 +393,10 @@ class SofascoreDataService:
             is_live = status_code in [6, 7]  # 1er o 2do tiempo
             is_finished = status_code in [100, 110, 120]  # Finalizado (normal, AET, AP)
             
+            # Obtener información de la liga
+            tournament = match_dict.get('tournament', {})
+            league_name = tournament.get('name', 'Unknown')
+            
             return {
                 'match_id': match_id,
                 'home_team': home_name,
@@ -237,7 +408,7 @@ class SofascoreDataService:
                 'is_finished': is_finished,
                 'status_code': status_code,
                 'timestamp': datetime.now().isoformat(),
-                'league': match_dict.get('tournament', {}).get('name', 'Unknown')
+                'league': league_name
             }
         except Exception as e:
             print(f"Error procesando estado del partido {match_id}: {e}")
@@ -252,7 +423,7 @@ class SofascoreDataService:
         """
         active_matches = []
         
-        for league in LEAGUE_IDS.keys():
+        for league in LIGAS_PROGOL.keys():
             try:
                 matches = self.get_league_matches(league)
                 
@@ -291,7 +462,7 @@ class SofascoreDataService:
         now = datetime.now()
         future_date = now + timedelta(days=days_ahead)
         
-        for league in LEAGUE_IDS.keys():
+        for league in LIGAS_PROGOL.keys():
             try:
                 matches = self.get_league_matches(league)
                 
@@ -356,19 +527,42 @@ def test_service():
     """Función para probar el servicio de datos."""
     service = SofascoreDataService()
     
+    # Probar actualización de IDs de ligas
+    print("Actualizando IDs de ligas...")
+    service.update_league_ids()
+    print(f"IDs de ligas actualizados: {service.league_ids}")
+    
+    # Probar obtención de IDs de temporadas
+    for league in list(LIGAS_PROGOL.keys())[:3]:  # Probar solo algunas ligas para no sobrecargar
+        print(f"\nObteniendo ID de temporada para {league}...")
+        season_id = service.get_season_id(league)
+        print(f"ID de temporada: {season_id}")
+        
+        if season_id:
+            print(f"Obteniendo partidos para {league}...")
+            matches = service.get_league_matches(league)
+            print(f"Partidos encontrados: {len(matches)}")
+            
+            if matches:
+                print(f"Primer partido: {matches[0].get('homeTeam', {}).get('name', '')} vs {matches[0].get('awayTeam', {}).get('name', '')}")
+    
+    # Probar búsqueda de partido
+    print("\nBuscando partido Real Madrid vs Barcelona...")
+    match = service.search_match("Real Madrid", "Barcelona")
+    if match:
+        print(f"Partido encontrado: {match.get('id')} - {match.get('homeTeam', {}).get('name', '')} vs {match.get('awayTeam', {}).get('name', '')}")
+    else:
+        print("Partido no encontrado")
+    
     # Probar obtención de partidos activos
-    print("Obteniendo partidos activos...")
+    print("\nObteniendo partidos activos...")
     active = service.get_active_matches()
     print(f"Partidos activos: {len(active)}")
-    for match in active:
-        print(service.format_match_for_display(match))
     
     # Probar obtención de próximos partidos
     print("\nObteniendo próximos partidos...")
     upcoming = service.get_upcoming_matches(days_ahead=3)
     print(f"Próximos partidos (3 días): {len(upcoming)}")
-    for match in upcoming:
-        print(match)
 
 if __name__ == "__main__":
     test_service()

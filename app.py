@@ -37,20 +37,32 @@ if 'quiniela_manager' not in st.session_state:
 
 if 'scheduler' not in st.session_state:
     st.session_state.scheduler = QuinielaScheduler(update_interval=UPDATE_INTERVAL)
+    # Configurar el scheduler pero no iniciarlo automáticamente mediante un hilo
     st.session_state.scheduler.set_data_service(st.session_state.data_service)
     st.session_state.scheduler.set_quiniela_manager(st.session_state.quiniela_manager)
     
-    # Iniciar scheduler en un hilo separado para no bloquear Streamlit
-    def start_scheduler():
-        st.session_state.scheduler.start()
-    
-    threading.Thread(target=start_scheduler).start()
+    # Variable para controlar si el scheduler está en ejecución
+    st.session_state.scheduler_running = False
 
 if 'notifications' not in st.session_state:
     st.session_state.notifications = []
 
 if 'last_update' not in st.session_state:
     st.session_state.last_update = None
+
+# Función para iniciar el scheduler manualmente
+def start_scheduler():
+    if not st.session_state.scheduler_running:
+        try:
+            st.session_state.scheduler.start()
+            st.session_state.scheduler_running = True
+            st.success("Servicio de actualización iniciado correctamente")
+        except Exception as e:
+            st.error(f"Error al iniciar servicio de actualización: {e}")
+
+# Botón para iniciar actualizaciones (en sidebar)
+if st.sidebar.button("▶️ Iniciar servicio de actualización"):
+    start_scheduler()
 
 # Funciones auxiliares de la interfaz
 def add_notification(tipo: str, mensaje: str, timestamp: Optional[datetime] = None):
@@ -300,35 +312,136 @@ def seccion_crear_quiniela():
         # Sección para ingresar partidos manualmente
         st.subheader("Ingresa los partidos para tu quiniela")
         
-        # Crear campos para agregar partidos
-        num_partidos = st.number_input("Número de partidos", min_value=1, max_value=14, value=9)
+        # Opciones de añadir partidos
+        add_method = st.radio(
+            "Método para añadir partidos", 
+            ["Ingresar manualmente", "Buscar partidos"], 
+            horizontal=True
+        )
         
         partidos_seleccionados = []
-        for i in range(int(num_partidos)):
-            st.markdown(f"#### Partido {i+1}")
-            col1, col2, col3 = st.columns([3, 1, 3])
+        
+        if add_method == "Ingresar manualmente":
+            # Crear campos para agregar partidos
+            num_partidos = st.number_input("Número de partidos", min_value=1, max_value=14, value=9)
             
+            for i in range(int(num_partidos)):
+                st.markdown(f"#### Partido {i+1}")
+                col1, col2, col3 = st.columns([3, 1, 3])
+                
+                with col1:
+                    equipo_local = st.text_input(f"Equipo Local #{i+1}", key=f"local_{i}")
+                
+                with col2:
+                    st.markdown("<p style='text-align: center; margin-top: 30px;'>vs</p>", unsafe_allow_html=True)
+                
+                with col3:
+                    equipo_visitante = st.text_input(f"Equipo Visitante #{i+1}", key=f"visitante_{i}")
+                
+                liga = st.selectbox(f"Liga del Partido #{i+1}", options=list(LIGAS_PROGOL.keys()), key=f"liga_{i}")
+                
+                # Añadir partido si se han ingresado ambos equipos
+                if equipo_local and equipo_visitante:
+                    partido = {
+                        'match_id': 1000000 + i,  # ID temporal para identificar el partido
+                        'home_team': equipo_local,
+                        'away_team': equipo_visitante,
+                        'league': liga,
+                        'scheduled_time': datetime.now().isoformat()
+                    }
+                    partidos_seleccionados.append(partido)
+        else:  # Buscar partidos
+            st.markdown("##### Búsqueda de partidos")
+            st.markdown("Ingresa los equipos para buscar partidos en SofaScore.")
+            
+            # Opción para actualizar IDs
+            st.info("Si no encuentras un partido, intenta actualizar los IDs de las ligas y temporadas.")
+            actualizar_ids = st.checkbox("Actualizar IDs de ligas y temporadas", value=False)
+            
+            if actualizar_ids:
+                with st.spinner("Actualizando IDs de ligas y temporadas..."):
+                    updated = st.session_state.data_service.update_league_ids()
+                    if updated:
+                        st.success("IDs actualizados correctamente")
+                    else:
+                        st.warning("No se pudieron actualizar algunos IDs. Intenta más tarde.")
+            
+            # Agregar partidos mediante búsqueda individual
+            col1, col2 = st.columns([1, 1])
             with col1:
-                equipo_local = st.text_input(f"Equipo Local #{i+1}", key=f"local_{i}")
-            
+                equipo_local_busqueda = st.text_input("Equipo Local", key="local_search")
             with col2:
-                st.markdown("<p style='text-align: center; margin-top: 30px;'>vs</p>", unsafe_allow_html=True)
+                equipo_visitante_busqueda = st.text_input("Equipo Visitante", key="away_search")
             
-            with col3:
-                equipo_visitante = st.text_input(f"Equipo Visitante #{i+1}", key=f"visitante_{i}")
+            buscar_partido = st.checkbox("Buscar este partido", key="search_match")
             
-            liga = st.selectbox(f"Liga del Partido #{i+1}", options=list(LIGAS_PROGOL.keys()), key=f"liga_{i}")
+            if buscar_partido and equipo_local_busqueda and equipo_visitante_busqueda:
+                with st.spinner(f"Buscando partido {equipo_local_busqueda} vs {equipo_visitante_busqueda}..."):
+                    match = st.session_state.data_service.search_match(equipo_local_busqueda, equipo_visitante_busqueda)
+                    
+                    if match:
+                        match_id = match.get('id')
+                        home_team = match.get('homeTeam', {}).get('name', '')
+                        away_team = match.get('awayTeam', {}).get('name', '')
+                        league = match.get('tournament', {}).get('name', '')
+                        
+                        st.success(f"¡Partido encontrado! {home_team} vs {away_team} ({league})")
+                        agregar_partido = st.checkbox(f"Agregar {home_team} vs {away_team}", value=True)
+                        
+                        if agregar_partido:
+                            partido = {
+                                'match_id': match_id,
+                                'home_team': home_team,
+                                'away_team': away_team,
+                                'league': league,
+                                'scheduled_time': datetime.fromtimestamp(match.get('startTimestamp', 0)).isoformat()
+                            }
+                            partidos_seleccionados.append(partido)
+                    else:
+                        st.error(f"No se encontró ningún partido para {equipo_local_busqueda} vs {equipo_visitante_busqueda}")
             
-            # Añadir partido si se han ingresado ambos equipos
-            if equipo_local and equipo_visitante:
-                partido = {
-                    'match_id': 1000000 + i,  # ID temporal para identificar el partido
-                    'home_team': equipo_local,
-                    'away_team': equipo_visitante,
-                    'league': liga,
-                    'scheduled_time': datetime.now().isoformat()
-                }
-                partidos_seleccionados.append(partido)
+            # Opción para buscar partidos próximos
+            st.markdown("##### O busca entre los próximos partidos")
+            buscar_proximos = st.checkbox("Buscar próximos partidos", key="search_upcoming")
+            
+            if buscar_proximos:
+                dias_adelante = st.slider("Días a buscar", min_value=1, max_value=14, value=7)
+                liga_filtro = st.multiselect("Filtrar por ligas", options=list(LIGAS_PROGOL.keys()), default=[])
+                
+                with st.spinner(f"Buscando próximos partidos para los próximos {dias_adelante} días..."):
+                    proximos_partidos = st.session_state.data_service.get_upcoming_matches(days_ahead=dias_adelante)
+                    
+                    if proximos_partidos:
+                        # Filtrar por ligas si es necesario
+                        if liga_filtro:
+                            ligas_a_buscar = [LIGAS_PROGOL[liga] for liga in liga_filtro]
+                            proximos_partidos = [p for p in proximos_partidos if p.get('league') in ligas_a_buscar]
+                        
+                        st.success(f"Se encontraron {len(proximos_partidos)} partidos")
+                        
+                        # Mostrar partidos para seleccionar
+                        for idx, partido in enumerate(proximos_partidos):
+                            home = partido.get('home_team', '')
+                            away = partido.get('away_team', '')
+                            league = partido.get('league', '')
+                            
+                            try:
+                                fecha = datetime.fromisoformat(partido.get('scheduled_time')).strftime("%d/%m/%Y %H:%M")
+                            except:
+                                fecha = "Fecha desconocida"
+                            
+                            agregar = st.checkbox(f"{home} vs {away} ({league}) - {fecha}", key=f"add_match_{idx}")
+                            
+                            if agregar:
+                                partidos_seleccionados.append(partido)
+                    else:
+                        st.warning("No se encontraron próximos partidos")
+        
+        # Mostrar resumen de partidos seleccionados
+        if partidos_seleccionados:
+            st.subheader(f"Partidos seleccionados ({len(partidos_seleccionados)})")
+            for idx, partido in enumerate(partidos_seleccionados):
+                st.markdown(f"- {partido.get('home_team', '')} vs {partido.get('away_team', '')} ({partido.get('league', '')})")
         
         # Botón para crear
         submitted = st.form_submit_button("Crear quiniela")
