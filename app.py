@@ -37,12 +37,12 @@ if 'quiniela_manager' not in st.session_state:
 
 if 'scheduler' not in st.session_state:
     st.session_state.scheduler = QuinielaScheduler(update_interval=UPDATE_INTERVAL)
-    # Configurar el scheduler pero no iniciarlo automáticamente mediante un hilo
+    # Configurar el scheduler pero no iniciarlo automáticamente
     st.session_state.scheduler.set_data_service(st.session_state.data_service)
     st.session_state.scheduler.set_quiniela_manager(st.session_state.quiniela_manager)
-    
-    # Variable para controlar si el scheduler está en ejecución
-    st.session_state.scheduler_running = False
+
+# Inicializar esta variable siempre, no solo la primera vez
+st.session_state.scheduler_running = getattr(st.session_state, 'scheduler_running', False)
 
 if 'notifications' not in st.session_state:
     st.session_state.notifications = []
@@ -52,17 +52,38 @@ if 'last_update' not in st.session_state:
 
 # Función para iniciar el scheduler manualmente
 def start_scheduler():
-    if not st.session_state.scheduler_running:
-        try:
+    """Inicia el servicio de actualización de datos."""
+    try:
+        # Usar un try-except para capturar cualquier error
+        if not st.session_state.scheduler_running:
             st.session_state.scheduler.start()
             st.session_state.scheduler_running = True
-            st.success("Servicio de actualización iniciado correctamente")
-        except Exception as e:
-            st.error(f"Error al iniciar servicio de actualización: {e}")
+            add_notification('success', 'Servicio de actualización iniciado correctamente')
+            return True
+        else:
+            add_notification('info', 'El servicio de actualización ya está en ejecución')
+            return False
+    except Exception as e:
+        st.session_state.scheduler_running = False
+        add_notification('error', f'Error al iniciar servicio de actualización: {str(e)}')
+        return False
 
-# Botón para iniciar actualizaciones (en sidebar)
+# En la sidebar de la aplicación principal
 if st.sidebar.button("▶️ Iniciar servicio de actualización"):
-    start_scheduler()
+    if start_scheduler():
+        st.sidebar.success("Servicio de actualización iniciado correctamente")
+    else:
+        st.sidebar.error("No se pudo iniciar el servicio de actualización")
+
+# También podemos agregar un botón para detener el scheduler
+if st.session_state.scheduler_running and st.sidebar.button("⏹️ Detener servicio de actualización"):
+    try:
+        st.session_state.scheduler.stop()
+        st.session_state.scheduler_running = False
+        add_notification('info', 'Servicio de actualización detenido')
+        st.sidebar.info("Servicio de actualización detenido")
+    except Exception as e:
+        st.sidebar.error(f"Error al detener el servicio: {e}")
 
 # Funciones auxiliares de la interfaz
 def add_notification(tipo: str, mensaje: str, timestamp: Optional[datetime] = None):
