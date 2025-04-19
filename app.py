@@ -112,7 +112,7 @@ def seccion_partidos_activos():
         if st.button("🔄 Buscar partidos en vivo"):
             with st.spinner("Buscando partidos..."):
                 st.session_state.scheduler.force_update()
-                st.experimental_rerun()
+                st.rerun()
         return
     
     # Agrupar por liga
@@ -173,13 +173,13 @@ def seccion_mis_quinielas():
             with col2:
                 if st.button("Ver detalle", key=f"btn_ver_{nombre}"):
                     st.session_state.quiniela_seleccionada = nombre
-                    st.experimental_rerun()
+                    st.rerun()
     
     # Botón para crear nueva quiniela
     if len(quinielas) < MAX_QUINIELAS_POR_USUARIO:
         if st.button("➕ Crear nueva quiniela"):
             st.session_state.creando_quiniela = True
-            st.experimental_rerun()
+            st.rerun()
 
 def seccion_detalle_quiniela(nombre_quiniela: str):
     """Muestra el detalle de una quiniela específica."""
@@ -188,7 +188,7 @@ def seccion_detalle_quiniela(nombre_quiniela: str):
     # Botón para volver a la lista
     if st.button("⬅️ Volver a mis quinielas"):
         del st.session_state.quiniela_seleccionada
-        st.experimental_rerun()
+        st.rerun()
     
     # Obtener datos de la quiniela
     quiniela_data = db.get_quiniela(nombre_quiniela)
@@ -277,7 +277,7 @@ def seccion_detalle_quiniela(nombre_quiniela: str):
                     st.success(f"Quiniela {nombre_quiniela} eliminada correctamente.")
                     del st.session_state.quiniela_seleccionada
                     st.session_state.pop("confirmar_eliminar", None)
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Error al eliminar la quiniela.")
             else:
@@ -291,7 +291,7 @@ def seccion_crear_quiniela():
     # Botón para volver a la lista
     if st.button("⬅️ Volver a mis quinielas"):
         st.session_state.pop("creando_quiniela", None)
-        st.experimental_rerun()
+        st.rerun()
     
     # Formulario para crear quiniela
     with st.form("form_crear_quiniela"):
@@ -305,7 +305,7 @@ def seccion_crear_quiniela():
             st.info("No hay partidos próximos disponibles.")
             submitted = st.form_submit_button("Buscar nuevamente")
             if submitted:
-                st.experimental_rerun()
+                st.rerun()
             return
         
         # Agrupar por liga
@@ -367,7 +367,7 @@ def seccion_crear_quiniela():
                 # Volver a la lista
                 st.session_state.pop("creando_quiniela", None)
                 st.session_state.quiniela_seleccionada = nombre
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"Error al crear la quiniela: {e}")
 
@@ -471,7 +471,7 @@ def main():
         with st.spinner("Actualizando datos..."):
             st.session_state.scheduler.force_update()
             time.sleep(2)  # Pequeña pausa para que se procesen los datos
-            st.experimental_rerun()
+            st.rerun()
     
     # Navegación principal
     if 'creando_quiniela' in st.session_state:
