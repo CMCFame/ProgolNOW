@@ -9,6 +9,9 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Callable, Optional
 
+# Importar módulos adicionales
+import database as db
+
 # Configurar logging
 logging.basicConfig(
     level=logging.INFO,
@@ -156,11 +159,37 @@ class QuinielaScheduler:
             return
         
         try:
-            # Obtener partidos activos
-            active_matches = self.data_service.get_active_matches()
+            # Obtener lista de quinielas
+            quinielas = db.list_quinielas()
+            
+            if not quinielas:
+                logger.info("No hay quinielas para actualizar")
+                return
+            
+            # Recopilar todos los IDs de partidos de todas las quinielas
+            all_match_ids = set()
+            for quiniela_info in quinielas:
+                quiniela_data = db.get_quiniela(quiniela_info['nombre'])
+                if quiniela_data and 'partidos' in quiniela_data:
+                    for partido in quiniela_data['partidos']:
+                        if 'match_id' in partido:
+                            all_match_ids.add(partido['match_id'])
+            
+            # Actualizar solo los partidos de las quinielas
+            updated_matches = []
+            for match_id in all_match_ids:
+                try:
+                    # Obtener estado actual del partido
+                    match_details = self.data_service.get_match_status(match_id)
+                    if match_details:
+                        updated_matches.append(match_details)
+                        # Guardar en la base de datos
+                        db.save_match(match_details)
+                except Exception as e:
+                    logger.error(f"Error al actualizar partido {match_id}: {e}")
             
             # Actualizar partidos en el gestor de quinielas y detectar cambios
-            changes = self.quiniela_manager.actualizar_partidos_activos(active_matches)
+            changes = self.quiniela_manager.actualizar_partidos_activos(updated_matches)
             
             # Si hay cambios, generar eventos
             if changes:
@@ -194,13 +223,13 @@ class QuinielaScheduler:
             update_event = UpdateEvent(
                 event_type="periodic_update",
                 data={
-                    "active_matches": len(active_matches),
+                    "matches_updated": len(updated_matches),
                     "changes_detected": len(changes)
                 }
             )
             self._notify_listeners(update_event)
             
-            logger.debug(f"Actualización completada: {len(active_matches)} partidos activos, {len(changes)} cambios")
+            logger.debug(f"Actualización completada: {len(updated_matches)} partidos actualizados, {len(changes)} cambios")
         
         except Exception as e:
             logger.error(f"Error en actualización de datos: {e}")

@@ -15,7 +15,7 @@ from data_service import SofascoreDataService
 from quiniela_manager import QuinielaManager, ProgolQuiniela
 from scheduler import QuinielaScheduler, UpdateEvent
 import database as db
-from config import COLORS, MATCH_STATUS, UPDATE_INTERVAL, MAX_QUINIELAS_POR_USUARIO, setup_directories
+from config import COLORS, MATCH_STATUS, UPDATE_INTERVAL, MAX_QUINIELAS_POR_USUARIO, setup_directories, LIGAS_PROGOL
 
 # Configurar página de Streamlit
 st.set_page_config(
@@ -297,39 +297,38 @@ def seccion_crear_quiniela():
     with st.form("form_crear_quiniela"):
         nombre = st.text_input("Nombre de la quiniela", placeholder="Ej: Mi Quiniela Semana 15")
         
-        # Obtener partidos próximos
-        with st.spinner("Cargando partidos próximos..."):
-            proximos_partidos = st.session_state.data_service.get_upcoming_matches(days_ahead=7)
+        # Sección para ingresar partidos manualmente
+        st.subheader("Ingresa los partidos para tu quiniela")
         
-        if not proximos_partidos:
-            st.info("No hay partidos próximos disponibles.")
-            submitted = st.form_submit_button("Buscar nuevamente")
-            if submitted:
-                st.rerun()
-            return
+        # Crear campos para agregar partidos
+        num_partidos = st.number_input("Número de partidos", min_value=1, max_value=14, value=9)
         
-        # Agrupar por liga
-        partidos_por_liga = {}
-        for partido in proximos_partidos:
-            liga = partido.get('league', 'Otra liga')
-            if liga not in partidos_por_liga:
-                partidos_por_liga[liga] = []
-            partidos_por_liga[liga].append(partido)
-        
-        # Selección de partidos
-        st.subheader("Selecciona los partidos para tu quiniela")
-        
-        seleccionados = {}
-        for liga, partidos in partidos_por_liga.items():
-            with st.expander(f"{liga} ({len(partidos)} partidos)"):
-                for partido in partidos:
-                    partido_id = partido.get('match_id')
-                    partido_texto = f"{partido.get('home_team')} vs {partido.get('away_team')}"
-                    fecha = datetime.fromisoformat(partido.get('scheduled_time')).strftime("%d/%m/%Y %H:%M")
-                    seleccionados[partido_id] = st.checkbox(
-                        f"{partido_texto} ({fecha})",
-                        key=f"check_{partido_id}"
-                    )
+        partidos_seleccionados = []
+        for i in range(int(num_partidos)):
+            st.markdown(f"#### Partido {i+1}")
+            col1, col2, col3 = st.columns([3, 1, 3])
+            
+            with col1:
+                equipo_local = st.text_input(f"Equipo Local #{i+1}", key=f"local_{i}")
+            
+            with col2:
+                st.markdown("<p style='text-align: center; margin-top: 30px;'>vs</p>", unsafe_allow_html=True)
+            
+            with col3:
+                equipo_visitante = st.text_input(f"Equipo Visitante #{i+1}", key=f"visitante_{i}")
+            
+            liga = st.selectbox(f"Liga del Partido #{i+1}", options=list(LIGAS_PROGOL.keys()), key=f"liga_{i}")
+            
+            # Añadir partido si se han ingresado ambos equipos
+            if equipo_local and equipo_visitante:
+                partido = {
+                    'match_id': 1000000 + i,  # ID temporal para identificar el partido
+                    'home_team': equipo_local,
+                    'away_team': equipo_visitante,
+                    'league': liga,
+                    'scheduled_time': datetime.now().isoformat()
+                }
+                partidos_seleccionados.append(partido)
         
         # Botón para crear
         submitted = st.form_submit_button("Crear quiniela")
@@ -345,15 +344,8 @@ def seccion_crear_quiniela():
                 st.error(f"Ya existe una quiniela con el nombre '{nombre}'.")
                 return
             
-            # Obtener partidos seleccionados
-            partidos_seleccionados = []
-            for partido in proximos_partidos:
-                partido_id = partido.get('match_id')
-                if seleccionados.get(partido_id, False):
-                    partidos_seleccionados.append(partido)
-            
             if not partidos_seleccionados:
-                st.error("Debes seleccionar al menos un partido.")
+                st.error("Debes ingresar al menos un partido.")
                 return
             
             # Crear quiniela

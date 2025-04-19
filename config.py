@@ -18,23 +18,23 @@ UPDATE_INTERVAL = int(os.environ.get("UPDATE_INTERVAL", "30"))  # segundos
 CURRENT_SEASON = os.environ.get("CURRENT_SEASON", "2024")
 
 # Ligas a considerar para Progol
-LIGAS_PROGOL = [
-    "Liga MX", 
-    "Liga Expansion MX", 
-    "Liga Femenil MX", 
-    "EPL",
-    "Serie A", 
-    "Bundesliga", 
-    "Eredivisie", 
-    "Ligue 1",
-    "Liga NOS", 
-    "Argentina Liga Profesional", 
-    "Brasileirao",
-    "MLS", 
-    "Liga Chilena", 
-    "Liga Belga", 
-    "RFPL"
-]
+LIGAS_PROGOL = {
+    "Liga MX": "Liga MX",
+    "Liga Expansion MX": "Liga Expansion MX",
+    "Liga Femenil MX": "Liga Femenil MX",
+    "EPL": "EPL",
+    "Serie A": "Serie A",
+    "Bundesliga": "Bundesliga",
+    "Eredivisie": "Eredivisie",
+    "Ligue 1": "Ligue 1",
+    "Liga NOS": "Liga NOS",
+    "Argentina Liga Profesional": "Argentina Liga Profesional",
+    "Brasileirao": "Brasileirao",
+    "MLS": "MLS",
+    "Liga Chilena": "Liga Chilena",
+    "Liga Belga": "Liga Belga",
+    "RFPL": "RFPL"
+}
 
 # Número máximo de quinielas por usuario
 MAX_QUINIELAS_POR_USUARIO = 30
