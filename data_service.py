@@ -1,12 +1,20 @@
 """
 Servicio de datos para la aplicación de quinielas.
-Obtiene datos de partidos de fútbol desde SofaScore usando ScraperFC.
+Obtiene datos de partidos de fútbol desde SofaScore usando requests.
 """
 import time
+import requests
+import random
 from datetime import datetime, timedelta
-import pandas as pd
-from ScraperFC.sofascore import Sofascore
 from typing import List, Dict, Any, Optional, Tuple
+
+# Configuración para requests
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+]
 
 # Mapeo de ligas para Progol
 LIGAS_PROGOL = {
@@ -27,6 +35,25 @@ LIGAS_PROGOL = {
     "RFPL": "RFPL"
 }
 
+# IDs de ligas en SofaScore
+LEAGUE_IDS = {
+    "Liga MX": 52,  # Liga MX
+    "Liga Expansion MX": 40378,  # Liga Expansion MX
+    "Liga Femenil MX": 16931,  # Liga MX Femenil
+    "EPL": 17,  # Premier League
+    "Serie A": 23,  # Serie A
+    "Bundesliga": 35,  # Bundesliga
+    "Eredivisie": 37,  # Eredivisie
+    "Ligue 1": 34,  # Ligue 1
+    "Liga NOS": 238,  # Primeira Liga
+    "Argentina Liga Profesional": 155,  # Argentina Liga Profesional
+    "Brasileirao": 325,  # Brasileirao
+    "MLS": 242,  # MLS
+    "Liga Chilena": 127,  # Primera División de Chile
+    "Liga Belga": 38,  # Jupiler Pro League
+    "RFPL": 203  # Premier League Rusa
+}
+
 class SofascoreDataService:
     """Servicio para obtener y procesar datos de partidos desde SofaScore."""
     
@@ -37,29 +64,126 @@ class SofascoreDataService:
         Args:
             current_year: Año actual para la temporada. Si es None, se usa el año actual.
         """
-        self.scraper = Sofascore()
         self.current_year = current_year or str(datetime.now().year)
+        self.headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.sofascore.com/"
+        }
         
+    def _get_random_user_agent(self):
+        """Obtiene un User-Agent aleatorio para evitar restricciones."""
+        return random.choice(USER_AGENTS)
+    
+    def _make_request(self, url: str, max_retries: int = 3) -> Optional[dict]:
+        """
+        Realiza una solicitud HTTP a la API de SofaScore.
+        
+        Args:
+            url: URL de la solicitud
+            max_retries: Número máximo de reintentos
+            
+        Returns:
+            Datos JSON de respuesta o None si hay error
+        """
+        retries = 0
+        while retries < max_retries:
+            try:
+                # Actualizar User-Agent en cada intento
+                self.headers["User-Agent"] = self._get_random_user_agent()
+                
+                response = requests.get(url, headers=self.headers, timeout=10)
+                response.raise_for_status()  # Lanzar excepción si hay error HTTP
+                
+                return response.json()
+            except requests.RequestException as e:
+                print(f"Error en solicitud a {url}: {e}")
+                retries += 1
+                # Esperar antes de reintentar (backoff exponencial)
+                time.sleep(2 ** retries)
+        
+        return None
+    
+    def get_season_id(self, league: str) -> Optional[int]:
+        """
+        Obtiene el ID de la temporada actual para una liga.
+        
+        Args:
+            league: Nombre de la liga
+            
+        Returns:
+            ID de la temporada o None si no se encuentra
+        """
+        if league not in LEAGUE_IDS:
+            print(f"Liga {league} no soportada")
+            return None
+        
+        league_id = LEAGUE_IDS[league]
+        url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/seasons"
+        
+        data = self._make_request(url)
+        if not data or "seasons" not in data:
+            return None
+        
+        # Buscar la temporada actual o la más reciente
+        seasons = data["seasons"]
+        for season in seasons:
+            if str(season["year"]) == self.current_year:
+                return season["id"]
+        
+        # Si no se encuentra la temporada del año actual, usar la más reciente
+        if seasons:
+            return seasons[0]["id"]
+        
+        return None
+    
     def get_league_matches(self, league: str) -> List[Dict[str, Any]]:
         """
         Obtiene todos los partidos de una liga para la temporada actual.
         
         Args:
-            league: Nombre de la liga (debe estar en los keys de LIGAS_PROGOL)
+            league: Nombre de la liga
             
         Returns:
             Lista de diccionarios con información de partidos
         """
-        if league not in LIGAS_PROGOL:
-            raise ValueError(f"Liga {league} no soportada. Ligas disponibles: {list(LIGAS_PROGOL.keys())}")
-        
-        try:
-            # Obtenemos todos los partidos de la liga para la temporada actual
-            matches = self.scraper.get_match_dicts(self.current_year, league)
-            return matches
-        except Exception as e:
-            print(f"Error obteniendo partidos de {league}: {e}")
+        if league not in LEAGUE_IDS:
+            print(f"Liga {league} no soportada")
             return []
+        
+        season_id = self.get_season_id(league)
+        if not season_id:
+            print(f"No se pudo obtener ID de temporada para {league}")
+            return []
+        
+        league_id = LEAGUE_IDS[league]
+        url = f"https://api.sofascore.com/api/v1/unique-tournament/{league_id}/season/{season_id}/events"
+        
+        data = self._make_request(url)
+        if not data or "events" not in data:
+            return []
+        
+        return data["events"]
+    
+    def get_match_dict(self, match_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Obtiene detalles de un partido específico.
+        
+        Args:
+            match_id: ID del partido en SofaScore
+            
+        Returns:
+            Diccionario con información del partido o None si hay error
+        """
+        url = f"https://api.sofascore.com/api/v1/event/{match_id}"
+        
+        data = self._make_request(url)
+        if not data or "event" not in data:
+            return None
+        
+        return data["event"]
     
     def get_match_status(self, match_id: int) -> Dict[str, Any]:
         """
@@ -71,12 +195,15 @@ class SofascoreDataService:
         Returns:
             Diccionario con información del estado del partido
         """
+        match_dict = self.get_match_dict(match_id)
+        if not match_dict:
+            return {}
+        
+        # Obtener información básica
         try:
-            match_dict = self.scraper.get_match_dict(match_id)
-            
-            # Obtener información relevante
-            home_name = match_dict['homeTeam']['name']
-            away_name = match_dict['awayTeam']['name']
+            # Obtener nombres de equipos
+            home_name = match_dict.get('homeTeam', {}).get('name', '')
+            away_name = match_dict.get('awayTeam', {}).get('name', '')
             
             # Obtener marcador (con manejo de casos donde no hay puntuación)
             home_score = match_dict.get('homeScore', {}).get('current', 0)
@@ -94,7 +221,7 @@ class SofascoreDataService:
             status = match_dict.get('status', {})
             status_code = status.get('code', 0)
             
-            # Códigos de estado (véase la documentación de SofaScore):
+            # Códigos de estado:
             # 0: No comenzado, 6-7: En progreso, 100,110,120: Finalizado, etc.
             is_live = status_code in [6, 7]  # 1er o 2do tiempo
             is_finished = status_code in [100, 110, 120]  # Finalizado (normal, AET, AP)
@@ -113,7 +240,7 @@ class SofascoreDataService:
                 'league': match_dict.get('tournament', {}).get('name', 'Unknown')
             }
         except Exception as e:
-            print(f"Error obteniendo estado del partido {match_id}: {e}")
+            print(f"Error procesando estado del partido {match_id}: {e}")
             return {}
     
     def get_active_matches(self) -> List[Dict[str, Any]]:
@@ -125,7 +252,7 @@ class SofascoreDataService:
         """
         active_matches = []
         
-        for league in LIGAS_PROGOL.keys():
+        for league in LEAGUE_IDS.keys():
             try:
                 matches = self.get_league_matches(league)
                 
@@ -136,13 +263,15 @@ class SofascoreDataService:
                     
                     # Solo considerar partidos en progreso
                     if status_code in [6, 7]:  # 1er o 2do tiempo
-                        # Obtener detalles completos del partido
-                        match_details = self.get_match_status(match['id'])
-                        if match_details:
-                            active_matches.append(match_details)
-                        
-                        # Pequeña pausa para no sobrecargar la API
-                        time.sleep(0.2)
+                        match_id = match.get('id')
+                        if match_id:
+                            # Obtener detalles completos del partido
+                            match_details = self.get_match_status(match_id)
+                            if match_details:
+                                active_matches.append(match_details)
+                            
+                            # Pequeña pausa para no sobrecargar la API
+                            time.sleep(0.5)
             except Exception as e:
                 print(f"Error procesando partidos activos de {league}: {e}")
                 
@@ -162,7 +291,7 @@ class SofascoreDataService:
         now = datetime.now()
         future_date = now + timedelta(days=days_ahead)
         
-        for league in LIGAS_PROGOL.keys():
+        for league in LEAGUE_IDS.keys():
             try:
                 matches = self.get_league_matches(league)
                 
@@ -179,9 +308,9 @@ class SofascoreDataService:
                     if now <= scheduled_time <= future_date:
                         # Extraer información básica
                         upcoming_match = {
-                            'match_id': match['id'],
-                            'home_team': match['homeTeam']['name'],
-                            'away_team': match['awayTeam']['name'],
+                            'match_id': match.get('id'),
+                            'home_team': match.get('homeTeam', {}).get('name', ''),
+                            'away_team': match.get('awayTeam', {}).get('name', ''),
                             'scheduled_time': scheduled_time.isoformat(),
                             'league': match.get('tournament', {}).get('name', 'Unknown')
                         }
