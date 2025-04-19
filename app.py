@@ -50,41 +50,6 @@ if 'notifications' not in st.session_state:
 if 'last_update' not in st.session_state:
     st.session_state.last_update = None
 
-# Función para iniciar el scheduler manualmente
-def start_scheduler():
-    """Inicia el servicio de actualización de datos."""
-    try:
-        # Usar un try-except para capturar cualquier error
-        if not st.session_state.scheduler_running:
-            st.session_state.scheduler.start()
-            st.session_state.scheduler_running = True
-            add_notification('success', 'Servicio de actualización iniciado correctamente')
-            return True
-        else:
-            add_notification('info', 'El servicio de actualización ya está en ejecución')
-            return False
-    except Exception as e:
-        st.session_state.scheduler_running = False
-        add_notification('error', f'Error al iniciar servicio de actualización: {str(e)}')
-        return False
-
-# En la sidebar de la aplicación principal
-if st.sidebar.button("▶️ Iniciar servicio de actualización"):
-    if start_scheduler():
-        st.sidebar.success("Servicio de actualización iniciado correctamente")
-    else:
-        st.sidebar.error("No se pudo iniciar el servicio de actualización")
-
-# También podemos agregar un botón para detener el scheduler
-if st.session_state.scheduler_running and st.sidebar.button("⏹️ Detener servicio de actualización"):
-    try:
-        st.session_state.scheduler.stop()
-        st.session_state.scheduler_running = False
-        add_notification('info', 'Servicio de actualización detenido')
-        st.sidebar.info("Servicio de actualización detenido")
-    except Exception as e:
-        st.sidebar.error(f"Error al detener el servicio: {e}")
-
 # Funciones auxiliares de la interfaz
 def add_notification(tipo: str, mensaje: str, timestamp: Optional[datetime] = None):
     """Añade una notificación al sistema."""
@@ -130,6 +95,41 @@ def mostrar_resultado_quiniela(resultado: str):
     text = MATCH_STATUS[resultado]["text"]
     
     return f"<span style='color:{color};font-weight:bold;'>{resultado} ({text})</span>"
+
+# Función para iniciar el scheduler manualmente
+def start_scheduler():
+    """Inicia el servicio de actualización de datos."""
+    try:
+        # Usar un try-except para capturar cualquier error
+        if not st.session_state.scheduler_running:
+            st.session_state.scheduler.start()
+            st.session_state.scheduler_running = True
+            add_notification('success', 'Servicio de actualización iniciado correctamente')
+            return True
+        else:
+            add_notification('info', 'El servicio de actualización ya está en ejecución')
+            return False
+    except Exception as e:
+        st.session_state.scheduler_running = False
+        add_notification('error', f'Error al iniciar servicio de actualización: {str(e)}')
+        return False
+
+# En la sidebar de la aplicación principal
+if st.sidebar.button("▶️ Iniciar servicio de actualización"):
+    if start_scheduler():
+        st.sidebar.success("Servicio de actualización iniciado correctamente")
+    else:
+        st.sidebar.error("No se pudo iniciar el servicio de actualización")
+
+# También podemos agregar un botón para detener el scheduler
+if st.session_state.scheduler_running and st.sidebar.button("⏹️ Detener servicio de actualización"):
+    try:
+        st.session_state.scheduler.stop()
+        st.session_state.scheduler_running = False
+        add_notification('info', 'Servicio de actualización detenido')
+        st.sidebar.info("Servicio de actualización detenido")
+    except Exception as e:
+        st.sidebar.error(f"Error al detener el servicio: {e}")
 
 # Funciones para las secciones de la aplicación
 def seccion_partidos_activos():
@@ -561,6 +561,13 @@ def handle_scheduler_event(event: UpdateEvent):
 # Registrar manejador de eventos
 st.session_state.scheduler.add_event_listener(handle_scheduler_event)
 
+# Botón para actualizar manualmente
+if st.sidebar.button("🔄 Actualizar ahora"):
+    with st.spinner("Actualizando datos..."):
+        st.session_state.scheduler.force_update()
+        time.sleep(2)  # Pequeña pausa para que se procesen los datos
+        st.rerun()
+
 # Estructura principal de la aplicación
 def main():
     """Función principal de la aplicación."""
@@ -591,13 +598,6 @@ def main():
                 st.markdown("### ⏱️ Próxima actualización")
                 st.progress(1 - (seconds_remaining / UPDATE_INTERVAL))
                 st.caption(f"En {mins}:{secs:02d}")
-    
-    # Botón para actualizar manualmente
-    if st.sidebar.button("🔄 Actualizar ahora"):
-        with st.spinner("Actualizando datos..."):
-            st.session_state.scheduler.force_update()
-            time.sleep(2)  # Pequeña pausa para que se procesen los datos
-            st.rerun()
     
     # Navegación principal
     if 'creando_quiniela' in st.session_state:
