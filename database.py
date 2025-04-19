@@ -5,12 +5,13 @@ Utiliza SQLite para almacenar historial de partidos y cambios.
 import os
 import sqlite3
 import json
+import tempfile
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
-from config import DATA_DIR
 
-# Ruta de la base de datos
-DB_PATH = os.path.join(DATA_DIR, "quiniela_data.db")
+# Usar un directorio temporal para la base de datos
+TEMP_DIR = tempfile.gettempdir()
+DB_PATH = os.path.join(TEMP_DIR, "quiniela_data.db")
 
 def get_connection():
     """

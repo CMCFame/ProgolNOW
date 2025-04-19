@@ -2,13 +2,14 @@
 Configuración para la aplicación de quinielas.
 """
 import os
+import tempfile
 from pathlib import Path
 
 # Directorio base de la aplicación
 BASE_DIR = Path(__file__).resolve().parent
 
-# Directorio de datos
-DATA_DIR = os.path.join(BASE_DIR, "data")
+# Directorio de datos (usando un directorio temporal para compatibilidad con hosting)
+DATA_DIR = os.path.join(tempfile.gettempdir(), "progol_data")
 
 # Configuración del programador
 UPDATE_INTERVAL = int(os.environ.get("UPDATE_INTERVAL", "30"))  # segundos
