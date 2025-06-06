@@ -1,661 +1,514 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-import json
-import csv
-import io
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-import streamlit as st
+import json
+import io
 
-class ProgolDataLoader:
-    """
-    Carga y procesa datos históricos de Progol para calibración
-    """
-    
-    @staticmethod
-    def load_historical_data(file_path: Optional[str] = None) -> pd.DataFrame:
-        """
-        Carga datos históricos de Progol
-        Si no se proporciona archivo, usa datos sintéticos para demostración
-        """
-        if file_path:
-            try:
-                if file_path.endswith('.csv'):
-                    return pd.read_csv(file_path)
-                elif file_path.endswith('.xlsx'):
-                    return pd.read_excel(file_path)
-                else:
-                    st.error("Formato de archivo no soportado. Use CSV o XLSX.")
-                    return pd.DataFrame()
-            except Exception as e:
-                st.error(f"Error cargando archivo: {str(e)}")
-                return pd.DataFrame()
-        else:
-            # Generar datos sintéticos para demostración
-            return ProgolDataLoader._generate_synthetic_data()
-    
-    @staticmethod
-    def _generate_synthetic_data() -> pd.DataFrame:
-        """
-        Genera datos sintéticos basados en distribuciones históricas conocidas
-        """
-        np.random.seed(42)
-        
-        # Simular 100 concursos históricos
-        concursos = []
-        
-        for concurso_id in range(2180, 2280):
-            for partido_num in range(1, 15):
-                # Distribución basada en metodología: 38% L, 29% E, 33% V
-                resultado = np.random.choice(['L', 'E', 'V'], p=[0.38, 0.29, 0.33])
-                
-                concursos.append({
-                    'concurso_id': concurso_id,
-                    'partido_num': partido_num,
-                    'resultado': resultado,
-                    'fecha': f"2024-{(concurso_id % 12) + 1:02d}-{(partido_num % 28) + 1:02d}"
-                })
-        
-        return pd.DataFrame(concursos)
-    
-    @staticmethod
-    def calculate_historical_stats(df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Calcula estadísticas históricas del DataFrame
-        """
-        if df.empty:
-            return {}
-        
-        stats = {}
-        
-        # Distribución general
-        if 'resultado' in df.columns:
-            dist = df['resultado'].value_counts(normalize=True)
-            stats['distribucion_general'] = {
-                'L': dist.get('L', 0),
-                'E': dist.get('E', 0),
-                'V': dist.get('V', 0)
-            }
-        
-        # Empates por concurso
-        if 'concurso_id' in df.columns and 'resultado' in df.columns:
-            empates_por_concurso = df[df['resultado'] == 'E'].groupby('concurso_id').size()
-            stats['empates_promedio'] = empates_por_concurso.mean()
-            stats['empates_std'] = empates_por_concurso.std()
-        
-        # Tendencias por posición de partido
-        if 'partido_num' in df.columns and 'resultado' in df.columns:
-            tendencias_posicion = df.groupby('partido_num')['resultado'].value_counts(normalize=True).unstack(fill_value=0)
-            stats['tendencias_por_posicion'] = tendencias_posicion.to_dict()
-        
-        return stats
+# Configuración de la página
+st.set_page_config(
+    page_title="Progol Optimizer - Metodología Definitiva",
+    page_icon="⚽",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-class ProgolExporter:
-    """
-    Exporta quinielas en diferentes formatos
-    """
+# Importar módulos locales con manejo de errores
+try:
+    from models.match_classifier import MatchClassifier
+    from models.portfolio_generator import PortfolioGenerator
+    from models.validators import PortfolioValidator
+    from utils.helpers import (
+        create_sample_data, 
+        clean_for_json, 
+        safe_json_dumps, 
+        load_partidos_from_csv, 
+        generate_csv_template, 
+        validate_partido_data
+    )
+    from config import Config
+except ImportError as e:
+    st.error(f"❌ Error importando módulos: {str(e)}")
+    st.error("Verifica que todos los archivos estén en su lugar correcto")
+    st.stop()
+
+def main():
+    """Función principal de la aplicación"""
     
-    @staticmethod
-    def export_to_csv(quinielas: List[Dict], partidos: List[Dict]) -> str:
-        """
-        Exporta quinielas a formato CSV
-        """
-        output = io.StringIO()
-        writer = csv.writer(output)
-        
-        # Encabezados
-        headers = ['Quiniela']
-        for i in range(14):
-            headers.append(f'Partido_{i+1}')
-        headers.extend(['Empates', 'Prob_11_Plus', 'Tipo'])
-        
-        writer.writerow(headers)
-        
-        # Datos
-        for i, quiniela in enumerate(quinielas):
-            row = [f"Q-{i+1}"]
-            row.extend(quiniela['resultados'])
-            row.extend([
-                quiniela.get('empates', quiniela['resultados'].count('E')),
-                f"{quiniela.get('prob_11_plus', 0):.3f}",
-                quiniela.get('tipo', 'Desconocido')
-            ])
-            writer.writerow(row)
-        
-        return output.getvalue()
+    st.title("🎯 Progol Optimizer - Metodología Definitiva")
+    st.markdown("*Sistema avanzado de optimización basado en arquitectura Core + Satélites*")
     
-    @staticmethod
-    def export_to_progol_format(quinielas: List[Dict], partidos: List[Dict]) -> str:
-        """
-        Exporta en formato específico para Progol (texto plano)
-        """
-        lines = []
-        lines.append("PROGOL OPTIMIZER - QUINIELAS OPTIMIZADAS")
-        lines.append("=" * 50)
-        lines.append(f"Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"Total quinielas: {len(quinielas)}")
-        lines.append("")
-        
-        # Información de partidos
-        lines.append("PARTIDOS:")
-        for i, partido in enumerate(partidos[:14]):
-            lines.append(f"{i+1:2d}. {partido['local']} vs {partido['visitante']}")
-        lines.append("")
-        
-        # Quinielas
-        lines.append("QUINIELAS:")
-        for i, quiniela in enumerate(quinielas):
-            resultados_str = ' '.join(quiniela['resultados'])
-            prob_str = f"{quiniela.get('prob_11_plus', 0):.1%}"
-            lines.append(f"Q-{i+1:2d}: {resultados_str} | Empates: {quiniela.get('empates', 0)} | Pr[≥11]: {prob_str}")
-        
-        lines.append("")
-        
-        # Estadísticas
-        if quinielas:
-            lines.append("ESTADÍSTICAS:")
-            empates_promedio = np.mean([q.get('empates', q['resultados'].count('E')) for q in quinielas])
-            prob_promedio = np.mean([q.get('prob_11_plus', 0) for q in quinielas])
-            
-            lines.append(f"Empates promedio: {empates_promedio:.2f}")
-            lines.append(f"Pr[≥11] promedio: {prob_promedio:.1%}")
-            
-            # Distribución
-            total_predicciones = len(quinielas) * 14
-            conteos = {'L': 0, 'E': 0, 'V': 0}
-            for q in quinielas:
-                for r in q['resultados']:
-                    conteos[r] += 1
-            
-            lines.append(f"Distribución: L={conteos['L']/total_predicciones:.1%}, "
-                        f"E={conteos['E']/total_predicciones:.1%}, "
-                        f"V={conteos['V']/total_predicciones:.1%}")
-        
-        return '\n'.join(lines)
+    # Inicializar session state
+    inicializar_session_state()
     
-    @staticmethod
-    def export_to_json(quinielas: List[Dict], partidos: List[Dict], 
-                      validacion: Optional[Dict] = None) -> str:
-        """
-        Exporta todo a formato JSON estructurado
-        """
-        export_data = {
-            'metadata': {
-                'timestamp': datetime.now().isoformat(),
-                'version': '1.0',
-                'total_quinielas': len(quinielas),
-                'metodologia': 'Core + Satélites con optimización GRASP-Annealing'
-            },
-            'partidos': partidos,
-            'quinielas': quinielas,
-            'validacion': validacion or {},
-            'estadisticas': ProgolExporter._calculate_export_stats(quinielas)
+    # Sidebar para configuración
+    configurar_sidebar()
+    
+    # Área principal con tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Entrada de Datos", "🎯 Generación", "📈 Resultados", "📄 Exportar"])
+    
+    with tab1:
+        mostrar_entrada_datos()
+    
+    with tab2:
+        mostrar_generacion()
+    
+    with tab3:
+        mostrar_resultados()
+    
+    with tab4:
+        mostrar_exportacion()
+
+def inicializar_session_state():
+    """Inicializa el estado de la sesión"""
+    if 'partidos_regular' not in st.session_state:
+        st.session_state.partidos_regular = []
+    if 'partidos_revancha' not in st.session_state:
+        st.session_state.partidos_revancha = []
+    if 'config' not in st.session_state:
+        st.session_state.config = {
+            'num_quinielas': 20,
+            'empates_min': 4,
+            'empates_max': 6,
+            'concentracion_general': 0.70,
+            'concentracion_inicial': 0.60,
+            'correlacion_target': -0.35,
+            'seed': 42
         }
+
+def configurar_sidebar():
+    """Configura el sidebar con parámetros"""
+    with st.sidebar:
+        st.header("⚙️ Configuración")
         
-        return json.dumps(export_data, indent=2, ensure_ascii=False)
+        # Información de la metodología
+        st.info(f"📊 **{Config.APP_NAME}** v{Config.APP_VERSION}\n\n🎯 {Config.APP_DESCRIPTION}")
+        
+        # Botón para cargar datos de muestra
+        if st.button("📝 Cargar Datos de Muestra", type="secondary"):
+            sample_data = create_sample_data()
+            st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
+            st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+            st.success("✅ Datos de muestra cargados")
+            st.rerun()
+        
+        # Parámetros principales
+        num_quinielas = st.slider("Número de quinielas", 10, 35, 20, 1)
+        empates_min = st.slider("Empates mínimos por quiniela", 3, 6, 4)
+        empates_max = st.slider("Empates máximos por quiniela", 4, 7, 6)
+        
+        # Guardar en session state
+        st.session_state.config.update({
+            'num_quinielas': num_quinielas,
+            'empates_min': empates_min,
+            'empates_max': empates_max
+        })
+        
+        # Mostrar distribución histórica
+        with st.expander("📊 Distribución Histórica Progol"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Locales", f"{Config.DISTRIBUCION_HISTORICA['L']:.1%}")
+            with col2:
+                st.metric("Empates", f"{Config.DISTRIBUCION_HISTORICA['E']:.1%}")
+            with col3:
+                st.metric("Visitantes", f"{Config.DISTRIBUCION_HISTORICA['V']:.1%}")
+
+def mostrar_entrada_datos():
+    """Muestra la interfaz de entrada de datos"""
+    st.header("Información de Partidos")
     
-    @staticmethod
-    def _calculate_export_stats(quinielas: List[Dict]) -> Dict[str, Any]:
-        """
-        Calcula estadísticas para exportación
-        """
-        if not quinielas:
-            return {}
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("⚽ Partidos Regulares (14)")
+        entrada_partidos_con_csv(st.session_state.partidos_regular, 'regular')
+    
+    with col2:
+        st.subheader("🔄 Partidos Revancha (7)")
+        entrada_partidos_con_csv(st.session_state.partidos_revancha, 'revancha')
+
+def entrada_partidos_con_csv(partidos_list, tipo):
+    """Interfaz para entrada de partidos con opción CSV"""
+    
+    tab1, tab2 = st.tabs(["✏️ Entrada Manual", "📄 Cargar CSV"])
+    
+    with tab1:
+        entrada_manual(partidos_list, tipo)
+    
+    with tab2:
+        entrada_csv(partidos_list, tipo)
+
+def entrada_manual(partidos_list, tipo):
+    """Entrada manual de partidos"""
+    max_partidos = 14 if tipo == 'regular' else 7
+    key_suffix = tipo
+    
+    with st.form(f"agregar_partido_{tipo}"):
+        col1, col2 = st.columns(2)
         
-        # Distribución
-        total_predicciones = len(quinielas) * 14
-        conteos = {'L': 0, 'E': 0, 'V': 0}
-        for q in quinielas:
-            for r in q['resultados']:
-                conteos[r] += 1
-        
-        distribucion = {k: v/total_predicciones for k, v in conteos.items()}
-        
-        # Empates
-        empates_por_quiniela = [q.get('empates', q['resultados'].count('E')) for q in quinielas]
+        with col1:
+            equipo_local = st.text_input("Equipo Local", key=f"local_{key_suffix}")
+        with col2:
+            equipo_visitante = st.text_input("Equipo Visitante", key=f"visit_{key_suffix}")
         
         # Probabilidades
-        probs_11_plus = [q.get('prob_11_plus', 0) for q in quinielas]
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            prob_local = st.slider("Prob. Local (%)", 0, 100, 40, key=f"prob_l_{key_suffix}")
+        with col2:
+            prob_empate = st.slider("Prob. Empate (%)", 0, 100, 30, key=f"prob_e_{key_suffix}")
+        with col3:
+            prob_visitante = st.slider("Prob. Visitante (%)", 0, 100, 30, key=f"prob_v_{key_suffix}")
         
-        return {
-            'distribucion': distribucion,
-            'empates': {
-                'promedio': np.mean(empates_por_quiniela),
-                'minimo': min(empates_por_quiniela),
-                'maximo': max(empates_por_quiniela),
-                'desviacion': np.std(empates_por_quiniela)
-            },
-            'probabilidades_11_plus': {
-                'promedio': np.mean(probs_11_plus),
-                'minimo': min(probs_11_plus),
-                'maximo': max(probs_11_plus),
-                'portafolio': 1 - np.prod([1 - p for p in probs_11_plus])
-            }
-        }
-
-class ProgolAnalyzer:
-    """
-    Herramientas de análisis para quinielas
-    """
-    
-    @staticmethod
-    def analyze_concentration_risk(quinielas: List[Dict]) -> Dict[str, Any]:
-        """
-        Analiza riesgo de concentración en el portafolio
-        """
-        if not quinielas:
-            return {}
+        # Factores contextuales
+        es_final = st.checkbox("Es Final/Derby", key=f"final_{key_suffix}")
         
-        concentraciones = []
+        submitted = st.form_submit_button("Agregar Partido")
         
-        for partido_idx in range(14):
-            conteos = {'L': 0, 'E': 0, 'V': 0}
-            
-            for quiniela in quinielas:
-                if partido_idx < len(quiniela['resultados']):
-                    resultado = quiniela['resultados'][partido_idx]
-                    conteos[resultado] += 1
-            
-            total = sum(conteos.values())
-            if total > 0:
-                max_concentracion = max(conteos.values()) / total
-                resultado_dominante = max(conteos, key=conteos.get)
-                
-                concentraciones.append({
-                    'partido': partido_idx + 1,
-                    'concentracion': max_concentracion,
-                    'resultado_dominante': resultado_dominante,
-                    'distribucion': {k: v/total for k, v in conteos.items()}
-                })
-        
-        # Estadísticas de concentración
-        concentraciones_valores = [c['concentracion'] for c in concentraciones]
-        
-        return {
-            'concentraciones_por_partido': concentraciones,
-            'concentracion_promedio': np.mean(concentraciones_valores),
-            'concentracion_maxima': max(concentraciones_valores),
-            'partidos_riesgo_alto': [c for c in concentraciones if c['concentracion'] > 0.7],
-            'riesgo_general': 'Alto' if max(concentraciones_valores) > 0.8 else 'Medio' if max(concentraciones_valores) > 0.7 else 'Bajo'
-        }
-    
-    @staticmethod
-    def simulate_outcomes(quinielas: List[Dict], partidos_clasificados: List[Dict], 
-                         num_simulaciones: int = 1000) -> Dict[str, Any]:
-        """
-        Simula resultados del portafolio usando Monte Carlo
-        """
-        resultados_simulacion = []
-        
-        for _ in range(num_simulaciones):
-            # Simular resultados reales de los 14 partidos
-            resultados_reales = []
-            for partido in partidos_clasificados:
-                prob_l = partido['prob_local']
-                prob_e = partido['prob_empate']
-                prob_v = partido['prob_visitante']
-                
-                resultado = np.random.choice(['L', 'E', 'V'], p=[prob_l, prob_e, prob_v])
-                resultados_reales.append(resultado)
-            
-            # Evaluar cada quiniela contra resultados reales
-            aciertos_por_quiniela = []
-            for quiniela in quinielas:
-                aciertos = sum(1 for pred, real in zip(quiniela['resultados'], resultados_reales) 
-                             if pred == real)
-                aciertos_por_quiniela.append(aciertos)
-            
-            # Estadísticas de la simulación
-            max_aciertos = max(aciertos_por_quiniela)
-            quinielas_11_plus = sum(1 for a in aciertos_por_quiniela if a >= 11)
-            quinielas_10_plus = sum(1 for a in aciertos_por_quiniela if a >= 10)
-            
-            resultados_simulacion.append({
-                'max_aciertos': max_aciertos,
-                'quinielas_11_plus': quinielas_11_plus,
-                'quinielas_10_plus': quinielas_10_plus,
-                'aciertos_promedio': np.mean(aciertos_por_quiniela)
-            })
-        
-        # Estadísticas finales
-        max_aciertos_dist = [r['max_aciertos'] for r in resultados_simulacion]
-        prob_11_plus = sum(1 for r in resultados_simulacion if r['quinielas_11_plus'] > 0) / num_simulaciones
-        prob_10_plus = sum(1 for r in resultados_simulacion if r['quinielas_10_plus'] > 0) / num_simulaciones
-        
-        return {
-            'probabilidad_11_plus': prob_11_plus,
-            'probabilidad_10_plus': prob_10_plus,
-            'aciertos_maximos_promedio': np.mean(max_aciertos_dist),
-            'distribucion_max_aciertos': np.histogram(max_aciertos_dist, bins=range(0, 15))[0].tolist(),
-            'estadisticas_detalladas': {
-                'percentil_25': np.percentile(max_aciertos_dist, 25),
-                'percentil_50': np.percentile(max_aciertos_dist, 50),
-                'percentil_75': np.percentile(max_aciertos_dist, 75),
-                'percentil_90': np.percentile(max_aciertos_dist, 90)
-            }
-        }
-    
-    @staticmethod
-    def compare_strategies(quinielas_core: List[Dict], quinielas_optimizadas: List[Dict],
-                          partidos_clasificados: List[Dict]) -> Dict[str, Any]:
-        """
-        Compara estrategia Core vs optimizada
-        """
-        comparison = {}
-        
-        # Simulación para ambas estrategias
-        sim_core = ProgolAnalyzer.simulate_outcomes(quinielas_core, partidos_clasificados, 500)
-        sim_optimizada = ProgolAnalyzer.simulate_outcomes(quinielas_optimizadas, partidos_clasificados, 500)
-        
-        comparison['core'] = {
-            'prob_11_plus': sim_core['probabilidad_11_plus'],
-            'aciertos_max_promedio': sim_core['aciertos_maximos_promedio'],
-            'num_quinielas': len(quinielas_core)
-        }
-        
-        comparison['optimizada'] = {
-            'prob_11_plus': sim_optimizada['probabilidad_11_plus'],
-            'aciertos_max_promedio': sim_optimizada['aciertos_maximos_promedio'],
-            'num_quinielas': len(quinielas_optimizadas)
-        }
-        
-        # Mejoras
-        mejora_prob = sim_optimizada['probabilidad_11_plus'] - sim_core['probabilidad_11_plus']
-        mejora_aciertos = sim_optimizada['aciertos_maximos_promedio'] - sim_core['aciertos_maximos_promedio']
-        
-        comparison['mejoras'] = {
-            'probabilidad_11_plus': mejora_prob,
-            'aciertos_promedio': mejora_aciertos,
-            'lift_porcentual': mejora_prob / max(sim_core['probabilidad_11_plus'], 0.01) * 100
-        }
-        
-        return comparison
-
-# ============================================================================
-# NUEVAS FUNCIONES PARA SOLUCIONAR ERROR JSON Y CARGA CSV
-# ============================================================================
-
-def clean_for_json(obj):
-    """
-    Limpia objetos para serialización JSON, convirtiendo tipos numpy a tipos nativos de Python
-    """
-    if isinstance(obj, dict):
-        return {k: clean_for_json(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [clean_for_json(item) for item in obj]
-    elif isinstance(obj, tuple):
-        return tuple(clean_for_json(item) for item in obj)
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, pd.Series):
-        return obj.tolist()
-    elif isinstance(obj, pd.DataFrame):
-        return obj.to_dict('records')
-    elif pd.isna(obj):
-        return None
-    else:
-        return obj
-
-def safe_json_dumps(obj, **kwargs):
-    """
-    JSON dumps seguro que limpia automáticamente los tipos numpy
-    """
-    cleaned_obj = clean_for_json(obj)
-    return json.dumps(cleaned_obj, **kwargs)
-
-def load_partidos_from_csv(file_path_or_buffer, tipo='regular'):
-    """
-    Carga partidos desde archivo CSV
-    
-    Args:
-        file_path_or_buffer: Ruta al archivo CSV o buffer de datos
-        tipo: 'regular' para 14 partidos o 'revancha' para 7 partidos
-    
-    Returns:
-        List[Dict]: Lista de partidos cargados
-    """
-    try:
-        # Leer CSV
-        if hasattr(file_path_or_buffer, 'read'):
-            # Es un buffer (archivo subido en Streamlit)
-            df = pd.read_csv(file_path_or_buffer)
-        else:
-            # Es una ruta de archivo
-            df = pd.read_csv(file_path_or_buffer)
-        
-        # Validar columnas requeridas
-        columnas_requeridas = ['local', 'visitante', 'prob_local', 'prob_empate', 'prob_visitante']
-        columnas_faltantes = [col for col in columnas_requeridas if col not in df.columns]
-        
-        if columnas_faltantes:
-            raise ValueError(f"Columnas faltantes en CSV: {columnas_faltantes}")
-        
-        # Validar número de filas
-        max_partidos = 14 if tipo == 'regular' else 7
-        if len(df) > max_partidos:
-            st.warning(f"CSV tiene {len(df)} filas, se tomarán las primeras {max_partidos}")
-            df = df.head(max_partidos)
-        
-        # Convertir a lista de diccionarios
-        partidos = []
-        for _, row in df.iterrows():
+        if submitted and equipo_local and equipo_visitante:
             # Normalizar probabilidades
-            prob_total = row['prob_local'] + row['prob_empate'] + row['prob_visitante']
-            
-            if prob_total <= 0:
-                raise ValueError(f"Probabilidades inválidas en fila {row.name + 1}")
-            
-            partido = {
-                'local': str(row['local']).strip(),
-                'visitante': str(row['visitante']).strip(),
-                'prob_local': float(row['prob_local']) / prob_total,
-                'prob_empate': float(row['prob_empate']) / prob_total,
-                'prob_visitante': float(row['prob_visitante']) / prob_total,
-                'es_final': bool(row.get('es_final', False)),
-                'forma_diferencia': int(row.get('forma_diferencia', 0)),
-                'lesiones_impact': int(row.get('lesiones_impact', 0))
-            }
-            
-            # Validar datos del partido
-            errores = validate_partido_data(partido)
-            if errores:
-                raise ValueError(f"Errores en fila {row.name + 1}: {'; '.join(errores)}")
-            
-            partidos.append(partido)
+            total_prob = prob_local + prob_empate + prob_visitante
+            if total_prob > 0:
+                partido = {
+                    'local': equipo_local,
+                    'visitante': equipo_visitante,
+                    'prob_local': prob_local / total_prob,
+                    'prob_empate': prob_empate / total_prob,
+                    'prob_visitante': prob_visitante / total_prob,
+                    'es_final': es_final,
+                    'forma_diferencia': 0,
+                    'lesiones_impact': 0
+                }
+                
+                if len(partidos_list) < max_partidos:
+                    partidos_list.append(partido)
+                    st.success(f"✅ Partido agregado: {equipo_local} vs {equipo_visitante}")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Ya tienes {max_partidos} partidos {tipo}.")
+    
+    # Mostrar partidos existentes
+    if partidos_list:
+        st.subheader(f"Partidos ingresados ({len(partidos_list)}/{max_partidos})")
         
-        return partidos
-        
-    except Exception as e:
-        raise ValueError(f"Error cargando CSV: {str(e)}")
+        for i, partido in enumerate(partidos_list):
+            col1, col2, col3 = st.columns([3, 2, 1])
+            
+            with col1:
+                st.text(f"{partido['local']} vs {partido['visitante']}")
+            with col2:
+                st.text(f"L:{partido['prob_local']:.2f} E:{partido['prob_empate']:.2f} V:{partido['prob_visitante']:.2f}")
+            with col3:
+                if st.button("🗑️", key=f"del_{key_suffix}_{i}"):
+                    partidos_list.pop(i)
+                    st.rerun()
 
-def generate_csv_template(tipo='regular'):
-    """
-    Genera template CSV para cargar partidos
+def entrada_csv(partidos_list, tipo):
+    """Entrada de partidos desde CSV"""
+    st.subheader(f"📄 Cargar partidos desde CSV ({tipo})")
     
-    Args:
-        tipo: 'regular' para 14 partidos o 'revancha' para 7 partidos
+    # Botón para descargar template
+    col1, col2 = st.columns(2)
     
-    Returns:
-        str: Contenido CSV como string
-    """
-    num_partidos = 14 if tipo == 'regular' else 7
+    with col1:
+        template_csv = generate_csv_template(tipo)
+        st.download_button(
+            label="📥 Descargar Template CSV",
+            data=template_csv,
+            file_name=f"template_partidos_{tipo}.csv",
+            mime="text/csv",
+            help="Descarga este template, llénalo con tus datos y súbelo aquí"
+        )
     
-    # Crear datos de ejemplo
-    data = []
-    equipos_ejemplo = [
-        ('Real Madrid', 'Barcelona'), ('Manchester United', 'Liverpool'),
-        ('PSG', 'Bayern Munich'), ('Chelsea', 'Arsenal'),
-        ('Juventus', 'Inter Milan'), ('Atletico Madrid', 'Sevilla'),
-        ('Borussia Dortmund', 'Bayern Leverkusen'), ('AC Milan', 'Napoli'),
-        ('Ajax', 'PSV'), ('Porto', 'Benfica'),
-        ('Lyon', 'Marseille'), ('Valencia', 'Athletic Bilbao'),
-        ('Roma', 'Lazio'), ('Tottenham', 'West Ham')
-    ]
+    with col2:
+        uploaded_file = st.file_uploader(
+            f"Subir CSV de partidos {tipo}",
+            type=['csv'],
+            key=f"csv_upload_{tipo}",
+            help="Sube un archivo CSV con el formato del template"
+        )
     
-    # Para revancha, usar equipos latinoamericanos
-    if tipo == 'revancha':
-        equipos_ejemplo = [
-            ('Flamengo', 'Palmeiras'), ('Boca Juniors', 'River Plate'),
-            ('America', 'Chivas'), ('São Paulo', 'Corinthians'),
-            ('Cruz Azul', 'Pumas'), ('Santos', 'Fluminense'),
-            ('Monterrey', 'Tigres')
-        ]
+    if uploaded_file is not None:
+        try:
+            # Preview del archivo
+            st.write("**Preview del archivo subido:**")
+            preview_df = pd.read_csv(uploaded_file)
+            st.dataframe(preview_df.head(), use_container_width=True)
+            
+            # Resetear puntero
+            uploaded_file.seek(0)
+            
+            # Botón para confirmar carga
+            if st.button(f"✅ Cargar {len(preview_df)} partidos", key=f"confirm_load_{tipo}"):
+                partidos_cargados = load_partidos_from_csv(uploaded_file, tipo)
+                
+                # Actualizar session state
+                if tipo == 'regular':
+                    st.session_state.partidos_regular = partidos_cargados
+                else:
+                    st.session_state.partidos_revancha = partidos_cargados
+                
+                st.success(f"✅ {len(partidos_cargados)} partidos {tipo} cargados exitosamente")
+                st.rerun()
+                
+        except Exception as e:
+            st.error(f"❌ Error cargando CSV: {str(e)}")
+            st.info("Verifica que el archivo tenga el formato correcto del template")
+
+def mostrar_generacion():
+    """Muestra la interfaz de generación de portafolio"""
+    st.header("Generación de Portafolio")
     
-    for i in range(num_partidos):
-        if i < len(equipos_ejemplo):
-            local, visitante = equipos_ejemplo[i]
+    if len(st.session_state.partidos_regular) >= 14:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🎯 Generar Core (4)", type="primary", use_container_width=True):
+                generar_quinielas_core()
+        
+        with col2:
+            if st.button("🔄 Generar Satélites", use_container_width=True):
+                generar_quinielas_satelites()
+        
+        with col3:
+            if st.button("⚡ Optimizar GRASP", use_container_width=True):
+                ejecutar_optimizacion_grasp()
+        
+        # Mostrar progreso
+        if 'quinielas_core' in st.session_state:
+            st.success(f"✅ Core: {len(st.session_state.quinielas_core)} quinielas generadas")
+        
+        if 'quinielas_satelites' in st.session_state:
+            st.success(f"✅ Satélites: {len(st.session_state.quinielas_satelites)} quinielas generadas")
+        
+        if 'quinielas_final' in st.session_state:
+            st.success(f"✅ Optimización: {len(st.session_state.quinielas_final)} quinielas finales")
+    else:
+        st.warning("⚠️ Necesitas ingresar al menos 14 partidos regulares para continuar.")
+
+def generar_quinielas_core():
+    """Genera las 4 quinielas core"""
+    try:
+        with st.spinner("🔄 Generando quinielas Core..."):
+            classifier = MatchClassifier()
+            generator = PortfolioGenerator()
+            
+            # Clasificar partidos
+            partidos_clasificados = classifier.classify_matches(st.session_state.partidos_regular)
+            
+            # Generar quinielas core
+            quinielas_core = generator.generate_core_quinielas(partidos_clasificados)
+            
+            st.session_state.partidos_clasificados = partidos_clasificados
+            st.session_state.quinielas_core = quinielas_core
+            
+            st.success(f"✅ {len(quinielas_core)} quinielas Core generadas exitosamente")
+            
+    except Exception as e:
+        st.error(f"❌ Error generando quinielas core: {str(e)}")
+
+def generar_quinielas_satelites():
+    """Genera quinielas satélites"""
+    if 'quinielas_core' not in st.session_state:
+        st.error("❌ Primero debes generar las quinielas Core")
+        return
+    
+    try:
+        with st.spinner("🔄 Generando quinielas Satélites..."):
+            generator = PortfolioGenerator()
+            config = st.session_state.config
+            
+            num_total = config['num_quinielas']
+            num_satelites = num_total - 4  # Restar las 4 Core
+            
+            quinielas_satelites = generator.generate_satellite_quinielas(
+                st.session_state.partidos_clasificados,
+                st.session_state.quinielas_core,
+                num_satelites
+            )
+            
+            st.session_state.quinielas_satelites = quinielas_satelites
+            
+            st.success(f"✅ {len(quinielas_satelites)} quinielas satélites generadas")
+            
+    except Exception as e:
+        st.error(f"❌ Error generando satélites: {str(e)}")
+
+def ejecutar_optimizacion_grasp():
+    """Ejecuta la optimización GRASP-Annealing"""
+    if 'quinielas_core' not in st.session_state or 'quinielas_satelites' not in st.session_state:
+        st.error("❌ Necesitas generar Core y Satélites primero")
+        return
+    
+    try:
+        with st.spinner("🔄 Ejecutando optimización GRASP..."):
+            generator = PortfolioGenerator()
+            validator = PortfolioValidator()
+            
+            # Combinar todas las quinielas
+            todas_quinielas = st.session_state.quinielas_core + st.session_state.quinielas_satelites
+            
+            # Optimizar
+            quinielas_optimizadas = generator.optimize_portfolio_grasp(
+                todas_quinielas,
+                st.session_state.partidos_clasificados
+            )
+            
+            # Validar
+            validacion = validator.validate_portfolio(quinielas_optimizadas)
+            
+            st.session_state.quinielas_final = quinielas_optimizadas
+            st.session_state.validacion = validacion
+            
+            if validacion['es_valido']:
+                st.success("✅ Optimización completada exitosamente")
+            else:
+                st.warning("⚠️ Optimización completada con advertencias")
+                
+    except Exception as e:
+        st.error(f"❌ Error en optimización: {str(e)}")
+
+def mostrar_resultados():
+    """Muestra análisis de resultados"""
+    st.header("Análisis de Resultados")
+    
+    if 'quinielas_final' not in st.session_state:
+        st.info("💡 Genera las quinielas primero para ver los resultados")
+        return
+    
+    quinielas = st.session_state.quinielas_final
+    validacion = st.session_state.get('validacion', {})
+    
+    # Métricas principales
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Quinielas", len(quinielas))
+    with col2:
+        empates_promedio = np.mean([q['resultados'].count('E') for q in quinielas])
+        st.metric("Empates Promedio", f"{empates_promedio:.1f}")
+    with col3:
+        prob_11_plus = np.mean([q.get('prob_11_plus', 0) for q in quinielas])
+        st.metric("Pr[≥11] Promedio", f"{prob_11_plus:.1%}")
+    with col4:
+        if validacion.get('es_valido'):
+            st.metric("Validación", "✅ Válido")
         else:
-            local, visitante = f'Equipo_{i*2+1}', f'Equipo_{i*2+2}'
-        
-        # Generar probabilidades de ejemplo
-        import random
-        random.seed(42 + i)  # Semilla fija para consistencia
-        
-        # Distribución realista: favorito local ligeramente
-        prob_local = random.uniform(0.30, 0.50)
-        prob_empate = random.uniform(0.20, 0.35)
-        prob_visitante = 1.0 - prob_local - prob_empate
-        
-        if prob_visitante < 0.15:  # Ajustar si muy bajo
-            prob_visitante = 0.15
-            total = prob_local + prob_empate + prob_visitante
-            prob_local /= total
-            prob_empate /= total
-            prob_visitante /= total
-        
-        data.append({
-            'local': local,
-            'visitante': visitante,
-            'prob_local': round(prob_local, 3),
-            'prob_empate': round(prob_empate, 3),
-            'prob_visitante': round(prob_visitante, 3),
-            'es_final': 'FALSE' if i > 0 else 'TRUE',  # Primer partido como final de ejemplo
-            'forma_diferencia': random.randint(-2, 2),
-            'lesiones_impact': random.randint(-1, 1)
-        })
+            st.metric("Validación", "⚠️ Advertencias")
     
-    # Convertir a CSV
+    # Tabla de quinielas
+    if quinielas:
+        st.subheader("Quinielas Generadas")
+        
+        # Crear DataFrame para mostrar
+        data = []
+        for i, quiniela in enumerate(quinielas):
+            row = {'Quiniela': f'Q-{i+1}'}
+            for j, resultado in enumerate(quiniela['resultados']):
+                row[f'P{j+1}'] = resultado
+            row['Empates'] = quiniela['resultados'].count('E')
+            row['Prob≥11'] = f"{quiniela.get('prob_11_plus', 0):.1%}"
+            data.append(row)
+        
+        df = pd.DataFrame(data)
+        st.dataframe(df, use_container_width=True)
+
+def mostrar_exportacion():
+    """Muestra opciones de exportación"""
+    st.header("Exportación de Resultados")
+    
+    if 'quinielas_final' not in st.session_state:
+        st.info("💡 Genera las quinielas primero para poder exportar")
+        return
+    
+    quinielas = st.session_state.quinielas_final
+    partidos = st.session_state.partidos_regular
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Exportar CSV
+        if st.button("📁 Generar CSV", use_container_width=True):
+            csv_data = generar_csv_export(quinielas, partidos)
+            st.download_button(
+                label="📥 Descargar CSV",
+                data=csv_data,
+                file_name=f"progol_quinielas_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+    
+    with col2:
+        # Exportar JSON
+        if st.button("📄 Generar JSON", use_container_width=True):
+            try:
+                json_data = {
+                    'fecha_generacion': datetime.now().isoformat(),
+                    'partidos': partidos,
+                    'quinielas': quinielas,
+                    'total_quinielas': len(quinielas)
+                }
+                
+                # Limpiar datos para JSON
+                json_data_clean = clean_for_json(json_data)
+                json_string = safe_json_dumps(json_data_clean, indent=2, ensure_ascii=False)
+                
+                st.download_button(
+                    label="📥 Descargar JSON",
+                    data=json_string,
+                    file_name=f"progol_quinielas_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+            except Exception as e:
+                st.error(f"❌ Error generando JSON: {str(e)}")
+    
+    with col3:
+        # Exportar formato Progol
+        if st.button("🎯 Generar Formato Progol", use_container_width=True):
+            progol_format = generar_formato_progol(quinielas)
+            st.download_button(
+                label="📥 Descargar Progol",
+                data=progol_format,
+                file_name=f"progol_boletos_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+
+def generar_csv_export(quinielas, partidos):
+    """Genera CSV para exportación"""
     output = io.StringIO()
-    if data:
-        fieldnames = ['local', 'visitante', 'prob_local', 'prob_empate', 'prob_visitante', 
-                     'es_final', 'forma_diferencia', 'lesiones_impact']
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(data)
+    
+    # Crear datos
+    data = []
+    for i, quiniela in enumerate(quinielas):
+        row = {'Quiniela': f'Q-{i+1}'}
+        for j, resultado in enumerate(quiniela['resultados']):
+            row[f'Partido_{j+1}'] = resultado
+        row['Empates'] = quiniela['resultados'].count('E')
+        row['Prob_11_Plus'] = quiniela.get('prob_11_plus', 0)
+        data.append(row)
+    
+    # Convertir a DataFrame y CSV
+    df = pd.DataFrame(data)
+    df.to_csv(output, index=False)
     
     return output.getvalue()
 
-# ============================================================================
-# FUNCIONES AUXILIARES ORIGINALES
-# ============================================================================
+def generar_formato_progol(quinielas):
+    """Genera formato específico para Progol"""
+    output = []
+    output.append("PROGOL OPTIMIZER - QUINIELAS GENERADAS")
+    output.append("=" * 50)
+    output.append(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    output.append(f"Total de quinielas: {len(quinielas)}")
+    output.append("")
+    
+    for i, quiniela in enumerate(quinielas):
+        output.append(f"QUINIELA {i+1:02d}: {' '.join(quiniela['resultados'])}")
+    
+    return "\n".join(output)
 
-def load_historical_data(file_path: Optional[str] = None) -> pd.DataFrame:
-    """
-    Función auxiliar para cargar datos históricos
-    """
-    return ProgolDataLoader.load_historical_data(file_path)
-
-def export_quinielas(quinielas: List[Dict], partidos: List[Dict], 
-                    formato: str = 'csv') -> str:
-    """
-    Función auxiliar para exportar quinielas
-    """
-    if formato.lower() == 'csv':
-        return ProgolExporter.export_to_csv(quinielas, partidos)
-    elif formato.lower() == 'json':
-        return ProgolExporter.export_to_json(quinielas, partidos)
-    elif formato.lower() == 'progol':
-        return ProgolExporter.export_to_progol_format(quinielas, partidos)
-    else:
-        raise ValueError(f"Formato no soportado: {formato}")
-
-def validate_partido_data(partido: Dict) -> List[str]:
-    """
-    Valida datos de un partido individual
-    """
-    errores = []
-    
-    # Campos requeridos
-    campos_requeridos = ['local', 'visitante', 'prob_local', 'prob_empate', 'prob_visitante']
-    for campo in campos_requeridos:
-        if campo not in partido:
-            errores.append(f"Campo requerido faltante: {campo}")
-    
-    # Validar probabilidades
-    if all(campo in partido for campo in ['prob_local', 'prob_empate', 'prob_visitante']):
-        probs = [partido['prob_local'], partido['prob_empate'], partido['prob_visitante']]
-        
-        # Verificar que son números
-        if not all(isinstance(p, (int, float)) for p in probs):
-            errores.append("Las probabilidades deben ser números")
-        
-        # Verificar rango
-        if not all(0 <= p <= 1 for p in probs):
-            errores.append("Las probabilidades deben estar entre 0 y 1")
-        
-        # Verificar suma aproximada a 1
-        suma = sum(probs)
-        if abs(suma - 1.0) > 0.05:
-            errores.append(f"Las probabilidades deben sumar ~1.0 (suma actual: {suma:.3f})")
-    
-    # Validar nombres de equipos
-    if 'local' in partido and not partido['local'].strip():
-        errores.append("Nombre del equipo local no puede estar vacío")
-    
-    if 'visitante' in partido and not partido['visitante'].strip():
-        errores.append("Nombre del equipo visitante no puede estar vacío")
-    
-    return errores
-
-def create_sample_data() -> Dict[str, Any]:
-    """
-    Crea datos de muestra para demostración
-    """
-    sample_partidos = [
-        {
-            'local': 'Real Madrid', 'visitante': 'Barcelona',
-            'prob_local': 0.35, 'prob_empate': 0.30, 'prob_visitante': 0.35,
-            'es_final': True, 'forma_diferencia': 0, 'lesiones_impact': 0
-        },
-        {
-            'local': 'Manchester United', 'visitante': 'Liverpool',
-            'prob_local': 0.40, 'prob_empate': 0.25, 'prob_visitante': 0.35,
-            'es_final': False, 'forma_diferencia': 1, 'lesiones_impact': -1
-        },
-        {
-            'local': 'PSG', 'visitante': 'Bayern Munich',
-            'prob_local': 0.30, 'prob_empate': 0.35, 'prob_visitante': 0.35,
-            'es_final': True, 'forma_diferencia': -1, 'lesiones_impact': 0
-        }
-    ]
-    
-    # Generar más partidos de muestra
-    equipos_muestra = [
-        ('Chelsea', 'Arsenal'), ('Juventus', 'Inter Milan'), ('Atletico Madrid', 'Sevilla'),
-        ('Borussia Dortmund', 'Bayern Leverkusen'), ('AC Milan', 'Napoli'),
-        ('Ajax', 'PSV'), ('Porto', 'Benfica'), ('Lyon', 'Marseille'),
-        ('Valencia', 'Athletic Bilbao'), ('Roma', 'Lazio'), ('Tottenham', 'West Ham')
-    ]
-    
-    np.random.seed(42)
-    
-    for local, visitante in equipos_muestra:
-        # Generar probabilidades aleatorias pero realistas
-        prob_base = np.random.dirichlet([4, 3, 3])  # Sesgo hacia local
-        
-        sample_partidos.append({
-            'local': local, 'visitante': visitante,
-            'prob_local': prob_base[0], 'prob_empate': prob_base[1], 'prob_visitante': prob_base[2],
-            'es_final': np.random.choice([True, False], p=[0.1, 0.9]),
-            'forma_diferencia': np.random.randint(-2, 3),
-            'lesiones_impact': np.random.randint(-1, 2)
-        })
-    
-    return {
-        'partidos_regular': sample_partidos,
-        'partidos_revancha': sample_partidos[:7]  # Primeros 7 para revancha
-    }
+if __name__ == "__main__":
+    main()
