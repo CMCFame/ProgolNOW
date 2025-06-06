@@ -484,93 +484,48 @@ def generate_csv_template(tipo='regular'):
     """
     num_partidos = 14 if tipo == 'regular' else 7
     
-    # Datos específicos por tipo
-    if tipo == 'regular':
-        # Equipos europeos y grandes ligas para partidos regulares
-        equipos_ejemplo = [
-            ('Real Madrid', 'Barcelona'),           # Clásico español
-            ('Manchester United', 'Liverpool'),     # Clásico inglés  
-            ('PSG', 'Bayern Munich'),              # Champions League
-            ('Chelsea', 'Arsenal'),                 # Premier League
-            ('Juventus', 'Inter Milan'),           # Serie A
-            ('Atletico Madrid', 'Sevilla'),        # La Liga
-            ('Borussia Dortmund', 'Bayern Leverkusen'), # Bundesliga
-            ('AC Milan', 'Napoli'),                # Serie A
-            ('Ajax', 'PSV'),                       # Eredivisie
-            ('Porto', 'Benfica'),                  # Primeira Liga
-            ('Lyon', 'Marseille'),                 # Ligue 1
-            ('Valencia', 'Athletic Bilbao'),       # La Liga
-            ('Roma', 'Lazio'),                     # Derby romano
-            ('Tottenham', 'West Ham')              # Premier League
-        ]
-        header_comment = "# Template para PARTIDOS REGULARES (14 partidos)\n# Ligas principales europeas y competencias internacionales\n"
-    else:
-        # Equipos latinoamericanos para revancha
-        equipos_ejemplo = [
-            ('Flamengo', 'Palmeiras'),             # Brasileirão
-            ('Boca Juniors', 'River Plate'),      # Superclásico argentino
-            ('America', 'Chivas'),                 # Clásico Nacional México
-            ('São Paulo', 'Corinthians'),         # Derby paulista
-            ('Cruz Azul', 'Pumas'),               # Liga MX
-            ('Santos', 'Fluminense'),             # Brasileirão
-            ('Monterrey', 'Tigres')               # Clásico regiomontano
-        ]
-        header_comment = "# Template para PARTIDOS REVANCHA (7 partidos)\n# Equipos latinoamericanos y clásicos regionales\n"
-    
     # Crear datos de ejemplo
     data = []
+    equipos_ejemplo = [
+        ('Real Madrid', 'Barcelona'), ('Manchester United', 'Liverpool'),
+        ('PSG', 'Bayern Munich'), ('Chelsea', 'Arsenal'),
+        ('Juventus', 'Inter Milan'), ('Atletico Madrid', 'Sevilla'),
+        ('Borussia Dortmund', 'Bayern Leverkusen'), ('AC Milan', 'Napoli'),
+        ('Ajax', 'PSV'), ('Porto', 'Benfica'),
+        ('Lyon', 'Marseille'), ('Valencia', 'Athletic Bilbao'),
+        ('Roma', 'Lazio'), ('Tottenham', 'West Ham')
+    ]
+    
+    # Para revancha, usar equipos latinoamericanos
+    if tipo == 'revancha':
+        equipos_ejemplo = [
+            ('Flamengo', 'Palmeiras'), ('Boca Juniors', 'River Plate'),
+            ('America', 'Chivas'), ('São Paulo', 'Corinthians'),
+            ('Cruz Azul', 'Pumas'), ('Santos', 'Fluminense'),
+            ('Monterrey', 'Tigres')
+        ]
     
     for i in range(num_partidos):
         if i < len(equipos_ejemplo):
             local, visitante = equipos_ejemplo[i]
         else:
-            local, visitante = f'Equipo_Local_{i+1}', f'Equipo_Visitante_{i+1}'
+            local, visitante = f'Equipo_{i*2+1}', f'Equipo_{i*2+2}'
         
-        # Generar probabilidades realistas según el tipo
+        # Generar probabilidades de ejemplo
         import random
         random.seed(42 + i)  # Semilla fija para consistencia
         
-        if tipo == 'regular':
-            # Para partidos regulares: más variedad, algunos empates altos
-            if i == 0:  # Primer partido como clásico equilibrado
-                prob_local, prob_empate, prob_visitante = 0.35, 0.30, 0.35
-                es_final = True
-            elif i in [2, 12]:  # Algunos como finales
-                prob_local = random.uniform(0.25, 0.40)
-                prob_empate = random.uniform(0.30, 0.40)  # Más empates en finales
-                prob_visitante = 1.0 - prob_local - prob_empate
-                es_final = True
-            else:
-                prob_local = random.uniform(0.30, 0.50)
-                prob_empate = random.uniform(0.20, 0.35)
-                prob_visitante = 1.0 - prob_local - prob_empate
-                es_final = False
-        else:
-            # Para revancha: equilibrio latinoamericano, más empates
-            if i == 1:  # Superclásico como empate probable
-                prob_local, prob_empate, prob_visitante = 0.30, 0.40, 0.30
-                es_final = True
-            else:
-                prob_local = random.uniform(0.28, 0.45)
-                prob_empate = random.uniform(0.25, 0.35)  # Tendencia a empates
-                prob_visitante = 1.0 - prob_local - prob_empate
-                es_final = False
+        # Distribución realista: favorito local ligeramente
+        prob_local = random.uniform(0.30, 0.50)
+        prob_empate = random.uniform(0.20, 0.35)
+        prob_visitante = 1.0 - prob_local - prob_empate
         
-        # Ajustar si prob_visitante queda muy baja
-        if prob_visitante < 0.15:
+        if prob_visitante < 0.15:  # Ajustar si muy bajo
+            prob_visitante = 0.15
             total = prob_local + prob_empate + prob_visitante
             prob_local /= total
             prob_empate /= total
-            prob_visitante = 0.15
-            # Renormalizar
-            total_new = prob_local + prob_empate + prob_visitante
-            prob_local /= total_new
-            prob_empate /= total_new
-            prob_visitante /= total_new
-        
-        # Factores contextuales variados
-        forma_diferencia = random.randint(-2, 2)
-        lesiones_impact = random.randint(-1, 1)
+            prob_visitante /= total
         
         data.append({
             'local': local,
@@ -578,24 +533,13 @@ def generate_csv_template(tipo='regular'):
             'prob_local': round(prob_local, 3),
             'prob_empate': round(prob_empate, 3),
             'prob_visitante': round(prob_visitante, 3),
-            'es_final': 'TRUE' if es_final else 'FALSE',
-            'forma_diferencia': forma_diferencia,
-            'lesiones_impact': lesiones_impact
+            'es_final': 'FALSE' if i > 0 else 'TRUE',  # Primer partido como final de ejemplo
+            'forma_diferencia': random.randint(-2, 2),
+            'lesiones_impact': random.randint(-1, 1)
         })
     
-    # Convertir a CSV con comentarios
+    # Convertir a CSV
     output = io.StringIO()
-    
-    # Escribir comentarios de cabecera
-    output.write(header_comment)
-    output.write(f"# Total partidos: {num_partidos}\n")
-    output.write(f"# Generado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    output.write("#\n")
-    output.write("# Columnas requeridas: local, visitante, prob_local, prob_empate, prob_visitante\n")
-    output.write("# Columnas opcionales: es_final, forma_diferencia, lesiones_impact\n")
-    output.write("# Las probabilidades se normalizarán automáticamente a 1.0\n")
-    output.write("#\n\n")
-    
     if data:
         fieldnames = ['local', 'visitante', 'prob_local', 'prob_empate', 'prob_visitante', 
                      'es_final', 'forma_diferencia', 'lesiones_impact']
