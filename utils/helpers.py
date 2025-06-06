@@ -371,6 +371,188 @@ class ProgolAnalyzer:
         
         return comparison
 
+# ============================================================================
+# NUEVAS FUNCIONES PARA SOLUCIONAR ERROR JSON Y CARGA CSV
+# ============================================================================
+
+def clean_for_json(obj):
+    """
+    Limpia objetos para serialización JSON, convirtiendo tipos numpy a tipos nativos de Python
+    """
+    if isinstance(obj, dict):
+        return {k: clean_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_for_json(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(clean_for_json(item) for item in obj)
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, pd.Series):
+        return obj.tolist()
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict('records')
+    elif pd.isna(obj):
+        return None
+    else:
+        return obj
+
+def safe_json_dumps(obj, **kwargs):
+    """
+    JSON dumps seguro que limpia automáticamente los tipos numpy
+    """
+    cleaned_obj = clean_for_json(obj)
+    return json.dumps(cleaned_obj, **kwargs)
+
+def load_partidos_from_csv(file_path_or_buffer, tipo='regular'):
+    """
+    Carga partidos desde archivo CSV
+    
+    Args:
+        file_path_or_buffer: Ruta al archivo CSV o buffer de datos
+        tipo: 'regular' para 14 partidos o 'revancha' para 7 partidos
+    
+    Returns:
+        List[Dict]: Lista de partidos cargados
+    """
+    try:
+        # Leer CSV
+        if hasattr(file_path_or_buffer, 'read'):
+            # Es un buffer (archivo subido en Streamlit)
+            df = pd.read_csv(file_path_or_buffer)
+        else:
+            # Es una ruta de archivo
+            df = pd.read_csv(file_path_or_buffer)
+        
+        # Validar columnas requeridas
+        columnas_requeridas = ['local', 'visitante', 'prob_local', 'prob_empate', 'prob_visitante']
+        columnas_faltantes = [col for col in columnas_requeridas if col not in df.columns]
+        
+        if columnas_faltantes:
+            raise ValueError(f"Columnas faltantes en CSV: {columnas_faltantes}")
+        
+        # Validar número de filas
+        max_partidos = 14 if tipo == 'regular' else 7
+        if len(df) > max_partidos:
+            st.warning(f"CSV tiene {len(df)} filas, se tomarán las primeras {max_partidos}")
+            df = df.head(max_partidos)
+        
+        # Convertir a lista de diccionarios
+        partidos = []
+        for _, row in df.iterrows():
+            # Normalizar probabilidades
+            prob_total = row['prob_local'] + row['prob_empate'] + row['prob_visitante']
+            
+            if prob_total <= 0:
+                raise ValueError(f"Probabilidades inválidas en fila {row.name + 1}")
+            
+            partido = {
+                'local': str(row['local']).strip(),
+                'visitante': str(row['visitante']).strip(),
+                'prob_local': float(row['prob_local']) / prob_total,
+                'prob_empate': float(row['prob_empate']) / prob_total,
+                'prob_visitante': float(row['prob_visitante']) / prob_total,
+                'es_final': bool(row.get('es_final', False)),
+                'forma_diferencia': int(row.get('forma_diferencia', 0)),
+                'lesiones_impact': int(row.get('lesiones_impact', 0))
+            }
+            
+            # Validar datos del partido
+            errores = validate_partido_data(partido)
+            if errores:
+                raise ValueError(f"Errores en fila {row.name + 1}: {'; '.join(errores)}")
+            
+            partidos.append(partido)
+        
+        return partidos
+        
+    except Exception as e:
+        raise ValueError(f"Error cargando CSV: {str(e)}")
+
+def generate_csv_template(tipo='regular'):
+    """
+    Genera template CSV para cargar partidos
+    
+    Args:
+        tipo: 'regular' para 14 partidos o 'revancha' para 7 partidos
+    
+    Returns:
+        str: Contenido CSV como string
+    """
+    num_partidos = 14 if tipo == 'regular' else 7
+    
+    # Crear datos de ejemplo
+    data = []
+    equipos_ejemplo = [
+        ('Real Madrid', 'Barcelona'), ('Manchester United', 'Liverpool'),
+        ('PSG', 'Bayern Munich'), ('Chelsea', 'Arsenal'),
+        ('Juventus', 'Inter Milan'), ('Atletico Madrid', 'Sevilla'),
+        ('Borussia Dortmund', 'Bayern Leverkusen'), ('AC Milan', 'Napoli'),
+        ('Ajax', 'PSV'), ('Porto', 'Benfica'),
+        ('Lyon', 'Marseille'), ('Valencia', 'Athletic Bilbao'),
+        ('Roma', 'Lazio'), ('Tottenham', 'West Ham')
+    ]
+    
+    # Para revancha, usar equipos latinoamericanos
+    if tipo == 'revancha':
+        equipos_ejemplo = [
+            ('Flamengo', 'Palmeiras'), ('Boca Juniors', 'River Plate'),
+            ('America', 'Chivas'), ('São Paulo', 'Corinthians'),
+            ('Cruz Azul', 'Pumas'), ('Santos', 'Fluminense'),
+            ('Monterrey', 'Tigres')
+        ]
+    
+    for i in range(num_partidos):
+        if i < len(equipos_ejemplo):
+            local, visitante = equipos_ejemplo[i]
+        else:
+            local, visitante = f'Equipo_{i*2+1}', f'Equipo_{i*2+2}'
+        
+        # Generar probabilidades de ejemplo
+        import random
+        random.seed(42 + i)  # Semilla fija para consistencia
+        
+        # Distribución realista: favorito local ligeramente
+        prob_local = random.uniform(0.30, 0.50)
+        prob_empate = random.uniform(0.20, 0.35)
+        prob_visitante = 1.0 - prob_local - prob_empate
+        
+        if prob_visitante < 0.15:  # Ajustar si muy bajo
+            prob_visitante = 0.15
+            total = prob_local + prob_empate + prob_visitante
+            prob_local /= total
+            prob_empate /= total
+            prob_visitante /= total
+        
+        data.append({
+            'local': local,
+            'visitante': visitante,
+            'prob_local': round(prob_local, 3),
+            'prob_empate': round(prob_empate, 3),
+            'prob_visitante': round(prob_visitante, 3),
+            'es_final': 'FALSE' if i > 0 else 'TRUE',  # Primer partido como final de ejemplo
+            'forma_diferencia': random.randint(-2, 2),
+            'lesiones_impact': random.randint(-1, 1)
+        })
+    
+    # Convertir a CSV
+    output = io.StringIO()
+    if data:
+        fieldnames = ['local', 'visitante', 'prob_local', 'prob_empate', 'prob_visitante', 
+                     'es_final', 'forma_diferencia', 'lesiones_impact']
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(data)
+    
+    return output.getvalue()
+
+# ============================================================================
+# FUNCIONES AUXILIARES ORIGINALES
+# ============================================================================
+
 def load_historical_data(file_path: Optional[str] = None) -> pd.DataFrame:
     """
     Función auxiliar para cargar datos históricos
