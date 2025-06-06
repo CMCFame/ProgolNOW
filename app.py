@@ -4,6 +4,8 @@ import numpy as np
 from datetime import datetime
 import json
 import io
+import sys
+import os
 
 # Configuración de la página
 st.set_page_config(
@@ -28,9 +30,100 @@ try:
     )
     from config import Config
 except ImportError as e:
-    st.error(f"❌ Error importando módulos: {str(e)}")
+    st.error(f"❌ Error importando módulos principales: {str(e)}")
     st.error("Verifica que todos los archivos estén en su lugar correcto")
     st.stop()
+
+# Configuración de scraping usando Streamlit Secrets
+SCRAPING_CONFIG = {
+    'odds_api_key': st.secrets.get("ODDS_API_KEY", None),
+    'rapid_api_key': st.secrets.get("RAPID_API_KEY", None),
+    'delay_range': (1, 3),
+    'timeout': 30,
+    'enabled': False
+}
+
+# Intentar importar sistema de scraping
+try:
+    # Agregar path del scraper
+    scraper_path = os.path.join(os.path.dirname(__file__), 'scrapers')
+    if scraper_path not in sys.path:
+        sys.path.append(scraper_path)
+    
+    from scrapers.template_generator import TemplateGenerator
+    from scrapers.data_aggregator import DataAggregator
+    SCRAPING_CONFIG['enabled'] = True
+    
+except ImportError as e:
+    st.warning(f"⚠️ Sistema de scraping no disponible: {str(e)}")
+    SCRAPING_CONFIG['enabled'] = False
+
+class ProgolScraper:
+    """Interfaz principal para scraping en Progol Optimizer"""
+    
+    def __init__(self):
+        self.available = SCRAPING_CONFIG['enabled']
+        if self.available:
+            try:
+                self.template_generator = TemplateGenerator(
+                    odds_api_key=SCRAPING_CONFIG['odds_api_key']
+                )
+                self.data_aggregator = DataAggregator(
+                    odds_api_key=SCRAPING_CONFIG['odds_api_key']
+                )
+            except Exception as e:
+                st.warning(f"Error inicializando scrapers: {e}")
+                self.available = False
+    
+    def is_available(self) -> bool:
+        """Verifica si el sistema de scraping está disponible"""
+        return self.available
+    
+    def get_auto_template(self, tipo: str, liga: str) -> str:
+        """Genera template automático con datos reales"""
+        if not self.available:
+            return None
+        
+        try:
+            return self.template_generator.generate_auto_template(tipo, liga)
+        except Exception as e:
+            st.error(f"Error generando template automático: {e}")
+            return None
+    
+    def get_available_leagues(self) -> list:
+        """Obtiene ligas disponibles para scraping"""
+        if not self.available:
+            return []
+        
+        return [
+            'premier_league',
+            'la_liga', 
+            'serie_a',
+            'bundesliga',
+            'champions_league',
+            'liga_mx',
+            'brasileirao'
+        ]
+    
+    def get_live_matches(self, liga: str, count: int = 14) -> list:
+        """Obtiene partidos en vivo para una liga"""
+        if not self.available:
+            return []
+        
+        try:
+            matches = self.data_aggregator.get_matches(liga, count)
+            return matches
+        except Exception as e:
+            st.error(f"Error obteniendo partidos en vivo: {e}")
+            return []
+    
+    def close(self):
+        """Cierra conexiones del scraper"""
+        if self.available:
+            if hasattr(self, 'template_generator'):
+                self.template_generator.close()
+            if hasattr(self, 'data_aggregator'):
+                self.data_aggregator.close_all()
 
 def main():
     """Función principal de la aplicación"""
@@ -75,24 +168,75 @@ def inicializar_session_state():
             'correlacion_target': -0.35,
             'seed': 42
         }
+    if 'scraping_config' not in st.session_state:
+        st.session_state.scraping_config = {
+            'enabled': SCRAPING_CONFIG['enabled'],
+            'auto_update': True,
+            'preferred_source': 'Automático'
+        }
 
 def configurar_sidebar():
-    """Configura el sidebar con parámetros"""
+    """Configura el sidebar con parámetros - CON SCRAPING"""
     with st.sidebar:
         st.header("⚙️ Configuración")
         
         # Información de la metodología
         st.info(f"📊 **{Config.APP_NAME}** v{Config.APP_VERSION}\n\n🎯 {Config.APP_DESCRIPTION}")
         
-        # Botón para cargar datos de muestra
-        if st.button("📝 Cargar Datos de Muestra", type="secondary"):
-            sample_data = create_sample_data()
-            st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
-            st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
-            st.success("✅ Datos de muestra cargados")
-            st.rerun()
+        # NUEVA SECCIÓN: Sistema de Scraping
+        with st.expander("🤖 Sistema de Scraping"):
+            if SCRAPING_CONFIG['enabled']:
+                st.success("✅ Scraping disponible")
+                
+                # Mostrar configuración de APIs
+                if SCRAPING_CONFIG['odds_api_key']:
+                    st.success("🔑 The Odds API configurada")
+                else:
+                    st.info("💡 Agregue ODDS_API_KEY en secrets para mayor precisión")
+                
+                # Configuración de scraping
+                auto_scraping = st.checkbox("Habilitar scraping automático", value=True)
+                
+                if auto_scraping:
+                    fuente_preferida = st.selectbox(
+                        "Fuente preferida:",
+                        ["Automático", "The Odds API", "Flashscore", "SofaScore"],
+                        help="Fuente de datos para scraping automático"
+                    )
+                    
+                    st.session_state.scraping_config.update({
+                        'enabled': True,
+                        'preferred_source': fuente_preferida
+                    })
+                else:
+                    st.session_state.scraping_config['enabled'] = False
+            else:
+                st.warning("⚠️ Scraping no disponible")
+                st.caption("Para habilitar: crear carpeta 'scrapers' con módulos de scraping")
+                st.session_state.scraping_config['enabled'] = False
+        
+        # Botones de carga de datos
+        st.subheader("📊 Carga de Datos")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📝 Datos Muestra", type="secondary", use_container_width=True):
+                sample_data = create_sample_data()
+                st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
+                st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+                st.success("✅ Datos de muestra cargados")
+                st.rerun()
+        
+        with col2:
+            # NUEVO: Botón de datos automáticos
+            if st.button("🤖 Datos Auto", type="primary", use_container_width=True, 
+                        disabled=not SCRAPING_CONFIG['enabled']):
+                cargar_datos_automaticos()
+        
+        st.divider()
         
         # Parámetros principales
+        st.subheader("⚙️ Parámetros")
         num_quinielas = st.slider("Número de quinielas", 10, 35, 20, 1)
         empates_min = st.slider("Empates mínimos por quiniela", 3, 6, 4)
         empates_max = st.slider("Empates máximos por quiniela", 4, 7, 6)
@@ -127,9 +271,62 @@ def configurar_sidebar():
             
             st.caption(f"📈 Promedio histórico: {Config.EMPATES_PROMEDIO_HISTORICO} empates por quiniela")
 
+def cargar_datos_automaticos():
+    """Carga datos automáticamente usando scraping"""
+    if not SCRAPING_CONFIG['enabled']:
+        st.error("❌ Sistema de scraping no disponible")
+        return
+    
+    try:
+        scraper = ProgolScraper()
+        
+        if not scraper.is_available():
+            st.error("❌ No se pudo inicializar el scraper")
+            return
+        
+        with st.spinner("🔄 Obteniendo datos automáticamente..."):
+            # Cargar partidos regulares (Premier League por defecto)
+            partidos_regular = scraper.get_live_matches('premier_league', 14)
+            
+            # Cargar partidos de revancha (Liga MX por defecto)
+            partidos_revancha = scraper.get_live_matches('liga_mx', 7)
+            
+            success_count = 0
+            
+            if partidos_regular:
+                st.session_state.partidos_regular = partidos_regular
+                st.success(f"✅ {len(partidos_regular)} partidos regulares cargados automáticamente")
+                success_count += 1
+            
+            if partidos_revancha:
+                st.session_state.partidos_revancha = partidos_revancha
+                st.success(f"✅ {len(partidos_revancha)} partidos de revancha cargados automáticamente")
+                success_count += 1
+            
+            if success_count == 0:
+                st.warning("⚠️ No se pudieron obtener datos automáticamente. Usando datos de muestra.")
+                # Fallback a datos de muestra
+                sample_data = create_sample_data()
+                st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
+                st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+            
+            scraper.close()
+            st.rerun()
+            
+    except Exception as e:
+        st.error(f"❌ Error cargando datos automáticamente: {str(e)}")
+        st.info("💡 Usando datos de muestra como fallback")
+        sample_data = create_sample_data()
+        st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
+        st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+        st.rerun()
+
 def mostrar_entrada_datos():
-    """Muestra la interfaz de entrada de datos - VERSIÓN MEJORADA"""
+    """Muestra la interfaz de entrada de datos - CON SCRAPING"""
     st.header("📊 Información de Partidos")
+    
+    # NUEVO: Mostrar estado de scraping
+    mostrar_estado_scraping()
     
     # Mostrar progreso actual
     num_regular = len(st.session_state.partidos_regular)
@@ -172,6 +369,46 @@ def mostrar_entrada_datos():
         st.subheader("🏆 Partidos Revancha (7)")
         st.caption("🔥 Clásicos latinoamericanos y derbis")
         entrada_partidos_con_csv(st.session_state.partidos_revancha, 'revancha')
+
+def mostrar_estado_scraping():
+    """Muestra estado del sistema de scraping en la interfaz"""
+    if SCRAPING_CONFIG['enabled']:
+        scraper = ProgolScraper()
+        
+        if scraper.is_available():
+            with st.expander("🤖 Estado del Sistema de Scraping"):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.success("✅ Sistema Activo")
+                    st.caption("Scraping disponible")
+                
+                with col2:
+                    ligas_disponibles = scraper.get_available_leagues()
+                    st.metric("Ligas Disponibles", len(ligas_disponibles))
+                
+                with col3:
+                    if st.button("🔄 Actualizar Datos", help="Obtiene datos frescos"):
+                        cargar_datos_automaticos()
+                
+                # Mostrar configuración actual
+                if SCRAPING_CONFIG['odds_api_key']:
+                    st.success("🔑 API comercial configurada")
+                else:
+                    st.info("💡 Sin API comercial - usando scraping directo")
+                
+                # Mostrar ligas disponibles
+                if ligas_disponibles:
+                    st.caption("**Ligas soportadas:**")
+                    st.caption(" • ".join([liga.replace('_', ' ').title() for liga in ligas_disponibles[:5]]))
+        
+        scraper.close()
+    else:
+        with st.expander("⚠️ Sistema de Scraping No Disponible"):
+            st.warning("Para habilitar scraping automático:")
+            st.code("1. Crear carpeta 'scrapers/'")
+            st.code("2. Agregar módulos de scraping")
+            st.code("3. (Opcional) Configurar API keys en secrets")
 
 def entrada_partidos_con_csv(partidos_list, tipo):
     """Interfaz para entrada de partidos con opción CSV"""
@@ -268,7 +505,7 @@ def entrada_manual(partidos_list, tipo):
                     st.rerun()
 
 def entrada_csv(partidos_list, tipo):
-    """Entrada de partidos desde CSV - VERSIÓN MEJORADA"""
+    """Entrada de partidos desde CSV - CON SCRAPING AUTOMÁTICO"""
     max_partidos = 14 if tipo == 'regular' else 7
     tipo_desc = "regulares" if tipo == 'regular' else "de revancha"
     
@@ -280,88 +517,180 @@ def entrada_csv(partidos_list, tipo):
     else:
         st.info("🏆 **Partidos Revancha (7):** Clásicos latinoamericanos, derbis regionales, finales continentales")
     
-    # Botón para descargar template
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        template_csv = generate_csv_template(tipo)
+    # NUEVA SECCIÓN: Templates automáticos vs manuales
+    if SCRAPING_CONFIG['enabled']:
+        template_tab1, template_tab2 = st.tabs(["🤖 Template Automático", "📝 Template Manual"])
         
-        st.download_button(
-            label=f"📥 Descargar Template {tipo.title()}",
-            data=template_csv,
-            file_name=f"progol_template_{tipo}_{max_partidos}partidos.csv",
-            mime="text/csv",
-            help=f"Template con {max_partidos} partidos {tipo_desc} de ejemplo",
-            use_container_width=True
-        )
+        with template_tab1:
+            generar_template_automatico(tipo)
         
-        # Mostrar información del template
-        st.caption(f"📊 Template incluye:")
-        if tipo == 'regular':
-            st.caption("• 14 partidos de ligas europeas")
-            st.caption("• Clásicos: Real-Barça, Man U-Liverpool")
-            st.caption("• Partidos Champions League")
-            st.caption("• Probabilidades variadas realistas")
-        else:
-            st.caption("• 7 partidos latinoamericanos")
-            st.caption("• Superclásico: Boca-River")
-            st.caption("• Clásico Nacional: América-Chivas")
-            st.caption("• Derbis brasileños y mexicanos")
+        with template_tab2:
+            generar_template_manual(tipo, max_partidos, tipo_desc)
+    else:
+        # Solo template manual si no hay scraping
+        generar_template_manual(tipo, max_partidos, tipo_desc)
     
-    with col2:
-        uploaded_file = st.file_uploader(
-            f"Subir CSV ({max_partidos} partidos {tipo_desc})",
-            type=['csv'],
-            key=f"csv_upload_{tipo}",
-            help=f"Archivo CSV con máximo {max_partidos} partidos {tipo_desc}"
-        )
+    st.divider()
+    
+    # Subida de archivo CSV
+    uploaded_file = st.file_uploader(
+        f"📤 Subir CSV ({max_partidos} partidos {tipo_desc})",
+        type=['csv'],
+        key=f"csv_upload_{tipo}",
+        help=f"Archivo CSV con máximo {max_partidos} partidos {tipo_desc}"
+    )
     
     # Mostrar formato esperado
     with st.expander(f"ℹ️ Formato requerido para partidos {tipo_desc}"):
         mostrar_formato_csv_especifico(tipo)
     
     if uploaded_file is not None:
-        try:
-            # Preview del archivo
-            st.write("**🔍 Preview del archivo subido:**")
-            preview_df = pd.read_csv(uploaded_file)
+        procesar_archivo_csv(uploaded_file, partidos_list, tipo, max_partidos, tipo_desc)
+
+def generar_template_automatico(tipo):
+    """Genera template con datos reales automáticos"""
+    st.markdown("**✨ Genera template con datos REALES obtenidos automáticamente**")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        liga_options = {
+            'Premier League': 'premier_league',
+            'La Liga': 'la_liga', 
+            'Serie A': 'serie_a',
+            'Bundesliga': 'bundesliga',
+            'Champions League': 'champions_league',
+            'Liga MX': 'liga_mx',
+            'Brasileirão': 'brasileirao'
+        }
+        
+        liga_seleccionada = st.selectbox(
+            f"Liga para template {tipo}:",
+            options=list(liga_options.keys()),
+            key=f"liga_auto_{tipo}"
+        )
+        
+        # Mostrar información de la liga
+        if liga_seleccionada:
+            liga_info = {
+                'Premier League': "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Equipos ingleses de élite",
+                'La Liga': "🇪🇸 Real Madrid, Barcelona, etc.",
+                'Liga MX': "🇲🇽 América, Chivas, Cruz Azul, etc.",
+                'Champions League': "🏆 Competencia europea de élite",
+                'Brasileirão': "🇧🇷 Flamengo, Palmeiras, etc."
+            }
+            st.caption(liga_info.get(liga_seleccionada, "Liga profesional"))
+    
+    with col2:
+        # Opciones avanzadas
+        st.markdown("**⚙️ Opciones:**")
+        usar_odds_reales = st.checkbox("Usar odds reales", value=True, key=f"odds_{tipo}")
+        incluir_contexto = st.checkbox("Incluir contexto (finales, derbis)", value=True, key=f"ctx_{tipo}")
+        
+        if st.button(f"🚀 Generar Template Automático", 
+                   key=f"gen_auto_{tipo}", use_container_width=True):
             
-            # Validar número de filas
-            if len(preview_df) > max_partidos:
-                st.warning(f"⚠️ El archivo tiene {len(preview_df)} filas, se tomarán las primeras {max_partidos}")
-                preview_df = preview_df.head(max_partidos)
-            elif len(preview_df) < max_partidos:
-                st.warning(f"⚠️ El archivo tiene solo {len(preview_df)} partidos, se recomienda {max_partidos} para {tipo}")
+            liga_codigo = liga_options[liga_seleccionada]
             
-            st.dataframe(preview_df, use_container_width=True)
-            
-            # Resetear puntero
-            uploaded_file.seek(0)
-            
-            # Botón para confirmar carga
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button(f"✅ Cargar {len(preview_df)} partidos {tipo_desc}", 
-                           key=f"confirm_load_{tipo}", use_container_width=True):
-                    partidos_cargados = load_partidos_from_csv(uploaded_file, tipo)
-                    
-                    # Actualizar session state
-                    if tipo == 'regular':
-                        st.session_state.partidos_regular = partidos_cargados
-                        st.balloons()  # Celebración para carga exitosa
-                    else:
-                        st.session_state.partidos_revancha = partidos_cargados
-                        st.balloons()
-                    
-                    st.success(f"🎉 {len(partidos_cargados)} partidos {tipo_desc} cargados exitosamente")
-                    st.rerun()
-            
-            with col2:
-                st.caption("📝 Revisa los datos antes de confirmar")
+            try:
+                scraper = ProgolScraper()
                 
-        except Exception as e:
-            st.error(f"❌ Error cargando CSV: {str(e)}")
-            st.info("💡 Verifica que el archivo tenga el formato correcto del template")
+                with st.spinner(f"🔄 Obteniendo datos reales de {liga_seleccionada}..."):
+                    template_auto = scraper.get_auto_template(tipo, liga_codigo)
+                
+                if template_auto:
+                    # Mostrar botón de descarga
+                    st.download_button(
+                        label="📥 Descargar Template AUTOMÁTICO",
+                        data=template_auto,
+                        file_name=f"progol_AUTO_{tipo}_{liga_codigo}_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key=f"download_auto_{tipo}"
+                    )
+                    
+                    st.success("✅ Template generado con datos reales")
+                    
+                    # Preview de los datos
+                    with st.expander("👀 Preview del template automático"):
+                        preview_lines = template_auto.split('\n')
+                        non_comment_lines = [line for line in preview_lines if not line.startswith('#')]
+                        st.code('\n'.join(non_comment_lines[:8]), language='csv')
+                else:
+                    st.warning("⚠️ No se pudieron obtener datos reales")
+                    st.info("💡 Intenta con otra liga o usa template manual")
+                
+                scraper.close()
+                
+            except Exception as e:
+                st.error(f"❌ Error generando template automático: {e}")
+
+def generar_template_manual(tipo, max_partidos, tipo_desc):
+    """Genera template manual (código existente)"""
+    template_csv = generate_csv_template(tipo)
+    
+    st.download_button(
+        label=f"📥 Descargar Template Manual {tipo.title()}",
+        data=template_csv,
+        file_name=f"progol_template_manual_{tipo}_{max_partidos}partidos.csv",
+        mime="text/csv",
+        help=f"Template manual con {max_partidos} partidos {tipo_desc} sintéticos",
+        use_container_width=True
+    )
+    
+    # Mostrar información del template manual
+    st.caption(f"📊 Template manual incluye:")
+    if tipo == 'regular':
+        st.caption("• 14 partidos sintéticos de ligas europeas")
+        st.caption("• Equipos: Real-Barça, Man U-Liverpool, etc.")
+        st.caption("• Probabilidades generadas algorítmicamente")
+    else:
+        st.caption("• 7 partidos sintéticos latinoamericanos")
+        st.caption("• Equipos: Boca-River, América-Chivas, etc.")
+        st.caption("• Probabilidades ajustadas para clásicos")
+
+def procesar_archivo_csv(uploaded_file, partidos_list, tipo, max_partidos, tipo_desc):
+    """Procesa archivo CSV subido"""
+    try:
+        # Preview del archivo
+        st.write("**🔍 Preview del archivo subido:**")
+        preview_df = pd.read_csv(uploaded_file)
+        
+        # Validar número de filas
+        if len(preview_df) > max_partidos:
+            st.warning(f"⚠️ El archivo tiene {len(preview_df)} filas, se tomarán las primeras {max_partidos}")
+            preview_df = preview_df.head(max_partidos)
+        elif len(preview_df) < max_partidos:
+            st.warning(f"⚠️ El archivo tiene solo {len(preview_df)} partidos, se recomienda {max_partidos} para {tipo}")
+        
+        st.dataframe(preview_df, use_container_width=True)
+        
+        # Resetear puntero
+        uploaded_file.seek(0)
+        
+        # Botón para confirmar carga
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(f"✅ Cargar {len(preview_df)} partidos {tipo_desc}", 
+                       key=f"confirm_load_{tipo}", use_container_width=True):
+                partidos_cargados = load_partidos_from_csv(uploaded_file, tipo)
+                
+                # Actualizar session state
+                if tipo == 'regular':
+                    st.session_state.partidos_regular = partidos_cargados
+                    st.balloons()  # Celebración para carga exitosa
+                else:
+                    st.session_state.partidos_revancha = partidos_cargados
+                    st.balloons()
+                
+                st.success(f"🎉 {len(partidos_cargados)} partidos {tipo_desc} cargados exitosamente")
+                st.rerun()
+        
+        with col2:
+            st.caption("📝 Revisa los datos antes de confirmar")
+            
+    except Exception as e:
+        st.error(f"❌ Error cargando CSV: {str(e)}")
+        st.info("💡 Verifica que el archivo tenga el formato correcto del template")
 
 def mostrar_formato_csv_especifico(tipo):
     """Muestra información específica del formato CSV según el tipo"""
@@ -813,7 +1142,8 @@ def mostrar_exportacion():
                     'metadata': {
                         'fecha_generacion': datetime.now().isoformat(),
                         'total_quinielas': len(quinielas),
-                        'metodologia': 'Core + Satélites GRASP-Annealing'
+                        'metodologia': 'Core + Satélites GRASP-Annealing',
+                        'scraping_enabled': SCRAPING_CONFIG['enabled']
                     },
                     'partidos': partidos,
                     'quinielas': quinielas,
@@ -942,6 +1272,12 @@ def generar_formato_progol(quinielas):
     output.append("=" * 50)
     output.append(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     output.append(f"Total de quinielas: {len(quinielas)}")
+    
+    if SCRAPING_CONFIG['enabled']:
+        output.append("Sistema: Metodología + Scraping Automático")
+    else:
+        output.append("Sistema: Metodología Definitiva")
+    
     output.append("")
     
     # Información del portafolio
