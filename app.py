@@ -36,52 +36,126 @@ except ImportError as e:
 
 # Configuración de scraping usando Streamlit Secrets
 SCRAPING_CONFIG = {
-    'odds_api_key': st.secrets.get("ODDS_API_KEY", None),
-    'rapid_api_key': st.secrets.get("RAPID_API_KEY", None),
+    'odds_api_key': st.secrets.get("ODDS_API_KEY", None) if hasattr(st, 'secrets') else None,
+    'rapid_api_key': st.secrets.get("RAPID_API_KEY", None) if hasattr(st, 'secrets') else None,
     'delay_range': (1, 3),
     'timeout': 30,
-    'enabled': False
+    'enabled': False,
+    'available_scrapers': [],
+    'error_message': None
 }
 
-# Intentar importar sistema de scraping
+# Intentar importar sistema de scraping de manera robusta
+def initialize_scraping_system():
+    """Inicializa el sistema de scraping de manera segura"""
+    try:
+        # Verificar si la carpeta scrapers existe
+        scraper_path = os.path.join(os.path.dirname(__file__), 'scrapers')
+        if not os.path.exists(scraper_path):
+            SCRAPING_CONFIG['error_message'] = "Carpeta 'scrapers' no encontrada"
+            return False
+        
+        # Agregar path del scraper si no está
+        if scraper_path not in sys.path:
+            sys.path.append(scraper_path)
+        
+        # Intentar importar módulos principales
+        try:
+            # Importar de manera segura
+            import scrapers
+            
+            # Verificar qué scrapers están disponibles
+            available_scrapers = scrapers.get_available_scrapers() if hasattr(scrapers, 'get_available_scrapers') else []
+            SCRAPING_CONFIG['available_scrapers'] = available_scrapers
+            
+            if available_scrapers:
+                SCRAPING_CONFIG['enabled'] = True
+                st.success(f"✅ Sistema de scraping disponible: {', '.join(available_scrapers)}")
+                return True
+            else:
+                SCRAPING_CONFIG['error_message'] = "No hay scrapers disponibles"
+                return False
+                
+        except ImportError as e:
+            SCRAPING_CONFIG['error_message'] = f"Error importando scrapers: {str(e)}"
+            return False
+            
+    except Exception as e:
+        SCRAPING_CONFIG['error_message'] = f"Error inicializando scraping: {str(e)}"
+        return False
+
+# Inicializar sistema de scraping
 try:
-    # Agregar path del scraper
-    scraper_path = os.path.join(os.path.dirname(__file__), 'scrapers')
-    if scraper_path not in sys.path:
-        sys.path.append(scraper_path)
-    
-    from scrapers.template_generator import TemplateGenerator
-    from scrapers.data_aggregator import DataAggregator
-    SCRAPING_CONFIG['enabled'] = True
-    
-except ImportError as e:
-    st.warning(f"⚠️ Sistema de scraping no disponible: {str(e)}")
+    scraping_initialized = initialize_scraping_system()
+    if scraping_initialized:
+        # Importaciones lazy - solo si el sistema está disponible
+        _template_generator = None
+        _data_aggregator = None
+        
+        def get_template_generator():
+            global _template_generator
+            if _template_generator is None:
+                try:
+                    from scrapers.template_generator import TemplateGenerator
+                    _template_generator = TemplateGenerator(odds_api_key=SCRAPING_CONFIG['odds_api_key'])
+                except Exception as e:
+                    st.warning(f"Error inicializando TemplateGenerator: {e}")
+                    _template_generator = False
+            return _template_generator if _template_generator is not False else None
+        
+        def get_data_aggregator():
+            global _data_aggregator
+            if _data_aggregator is None:
+                try:
+                    from scrapers.data_aggregator import DataAggregator
+                    _data_aggregator = DataAggregator(odds_api_key=SCRAPING_CONFIG['odds_api_key'])
+                except Exception as e:
+                    st.warning(f"Error inicializando DataAggregator: {e}")
+                    _data_aggregator = False
+            return _data_aggregator if _data_aggregator is not False else None
+    else:
+        # Funciones dummy si no está disponible
+        def get_template_generator():
+            return None
+        def get_data_aggregator():
+            return None
+        
+        if SCRAPING_CONFIG['error_message']:
+            st.info(f"ℹ️ Scraping no disponible: {SCRAPING_CONFIG['error_message']}")
+            
+except Exception as e:
     SCRAPING_CONFIG['enabled'] = False
+    SCRAPING_CONFIG['error_message'] = f"Error general de scraping: {str(e)}"
+    
+    def get_template_generator():
+        return None
+    def get_data_aggregator():
+        return None
 
 class ProgolScraper:
-    """Interfaz principal para scraping en Progol Optimizer"""
+    """Interfaz principal para scraping en Progol Optimizer - VERSIÓN ROBUSTA"""
     
     def __init__(self):
         self.available = SCRAPING_CONFIG['enabled']
+        self.template_generator = None
+        self.data_aggregator = None
+        
         if self.available:
-            try:
-                self.template_generator = TemplateGenerator(
-                    odds_api_key=SCRAPING_CONFIG['odds_api_key']
-                )
-                self.data_aggregator = DataAggregator(
-                    odds_api_key=SCRAPING_CONFIG['odds_api_key']
-                )
-            except Exception as e:
-                st.warning(f"Error inicializando scrapers: {e}")
+            self.template_generator = get_template_generator()
+            self.data_aggregator = get_data_aggregator()
+            
+            # Verificar si los componentes se inicializaron correctamente
+            if not self.template_generator and not self.data_aggregator:
                 self.available = False
+                st.warning("⚠️ Componentes de scraping no se pudieron inicializar")
     
     def is_available(self) -> bool:
         """Verifica si el sistema de scraping está disponible"""
-        return self.available
+        return self.available and (self.template_generator is not None or self.data_aggregator is not None)
     
     def get_auto_template(self, tipo: str, liga: str) -> str:
         """Genera template automático con datos reales"""
-        if not self.available:
+        if not self.available or not self.template_generator:
             return None
         
         try:
@@ -92,22 +166,18 @@ class ProgolScraper:
     
     def get_available_leagues(self) -> list:
         """Obtiene ligas disponibles para scraping"""
-        if not self.available:
+        if not self.available or not self.template_generator:
             return []
         
-        return [
-            'premier_league',
-            'la_liga', 
-            'serie_a',
-            'bundesliga',
-            'champions_league',
-            'liga_mx',
-            'brasileirao'
-        ]
+        try:
+            return self.template_generator.get_available_leagues()
+        except Exception as e:
+            st.warning(f"Error obteniendo ligas: {e}")
+            return []
     
     def get_live_matches(self, liga: str, count: int = 14) -> list:
         """Obtiene partidos en vivo para una liga"""
-        if not self.available:
+        if not self.available or not self.data_aggregator:
             return []
         
         try:
@@ -117,13 +187,26 @@ class ProgolScraper:
             st.error(f"Error obteniendo partidos en vivo: {e}")
             return []
     
+    def get_scraping_status(self) -> dict:
+        """Obtiene estado detallado del sistema de scraping"""
+        return {
+            'enabled': self.available,
+            'template_generator_ok': self.template_generator is not None,
+            'data_aggregator_ok': self.data_aggregator is not None,
+            'available_scrapers': SCRAPING_CONFIG.get('available_scrapers', []),
+            'has_api_key': SCRAPING_CONFIG.get('odds_api_key') is not None,
+            'error_message': SCRAPING_CONFIG.get('error_message')
+        }
+    
     def close(self):
         """Cierra conexiones del scraper"""
-        if self.available:
-            if hasattr(self, 'template_generator'):
+        try:
+            if self.template_generator and hasattr(self.template_generator, 'close'):
                 self.template_generator.close()
-            if hasattr(self, 'data_aggregator'):
+            if self.data_aggregator and hasattr(self.data_aggregator, 'close_all'):
                 self.data_aggregator.close_all()
+        except Exception as e:
+            st.warning(f"Error cerrando scrapers: {e}")
 
 def main():
     """Función principal de la aplicación"""
@@ -272,54 +355,77 @@ def configurar_sidebar():
             st.caption(f"📈 Promedio histórico: {Config.EMPATES_PROMEDIO_HISTORICO} empates por quiniela")
 
 def cargar_datos_automaticos():
-    """Carga datos automáticamente usando scraping"""
-    if not SCRAPING_CONFIG['enabled']:
+    """Carga datos automáticamente usando scraping - VERSIÓN ROBUSTA"""
+    scraper = ProgolScraper()
+    
+    if not scraper.is_available():
         st.error("❌ Sistema de scraping no disponible")
+        st.info("💡 Usando datos de muestra como alternativa")
+        
+        # Fallback a datos de muestra
+        try:
+            sample_data = create_sample_data()
+            st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
+            st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+            st.success("✅ Datos de muestra cargados como fallback")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Error cargando datos de muestra: {e}")
         return
     
     try:
-        scraper = ProgolScraper()
-        
-        if not scraper.is_available():
-            st.error("❌ No se pudo inicializar el scraper")
-            return
-        
         with st.spinner("🔄 Obteniendo datos automáticamente..."):
-            # Cargar partidos regulares (Premier League por defecto)
-            partidos_regular = scraper.get_live_matches('premier_league', 14)
-            
-            # Cargar partidos de revancha (Liga MX por defecto)
-            partidos_revancha = scraper.get_live_matches('liga_mx', 7)
-            
             success_count = 0
             
-            if partidos_regular:
-                st.session_state.partidos_regular = partidos_regular
-                st.success(f"✅ {len(partidos_regular)} partidos regulares cargados automáticamente")
-                success_count += 1
+            # Intentar cargar partidos regulares (Premier League por defecto)
+            try:
+                partidos_regular = scraper.get_live_matches('premier_league', 14)
+                if partidos_regular and len(partidos_regular) > 0:
+                    st.session_state.partidos_regular = partidos_regular[:14]
+                    st.success(f"✅ {len(partidos_regular)} partidos regulares cargados automáticamente (Premier League)")
+                    success_count += 1
+                else:
+                    st.warning("⚠️ No se pudieron obtener partidos regulares automáticamente")
+            except Exception as e:
+                st.warning(f"⚠️ Error cargando partidos regulares: {e}")
             
-            if partidos_revancha:
-                st.session_state.partidos_revancha = partidos_revancha
-                st.success(f"✅ {len(partidos_revancha)} partidos de revancha cargados automáticamente")
-                success_count += 1
+            # Intentar cargar partidos de revancha (Liga MX por defecto)
+            try:
+                partidos_revancha = scraper.get_live_matches('liga_mx', 7)
+                if partidos_revancha and len(partidos_revancha) > 0:
+                    st.session_state.partidos_revancha = partidos_revancha[:7]
+                    st.success(f"✅ {len(partidos_revancha)} partidos de revancha cargados automáticamente (Liga MX)")
+                    success_count += 1
+                else:
+                    st.warning("⚠️ No se pudieron obtener partidos de revancha automáticamente")
+            except Exception as e:
+                st.warning(f"⚠️ Error cargando partidos de revancha: {e}")
             
+            # Si no se cargó nada automáticamente, usar fallback
             if success_count == 0:
-                st.warning("⚠️ No se pudieron obtener datos automáticamente. Usando datos de muestra.")
-                # Fallback a datos de muestra
+                st.info("💡 Ningún dato automático disponible. Usando datos de muestra.")
                 sample_data = create_sample_data()
                 st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
                 st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+                st.success("✅ Datos de muestra cargados como fallback")
             
             scraper.close()
             st.rerun()
             
     except Exception as e:
-        st.error(f"❌ Error cargando datos automáticamente: {str(e)}")
+        st.error(f"❌ Error general cargando datos automáticamente: {str(e)}")
         st.info("💡 Usando datos de muestra como fallback")
-        sample_data = create_sample_data()
-        st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
-        st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
-        st.rerun()
+        
+        # Fallback final
+        try:
+            sample_data = create_sample_data()
+            st.session_state.partidos_regular = sample_data['partidos_regular'][:14]
+            st.session_state.partidos_revancha = sample_data['partidos_revancha'][:7]
+            st.success("✅ Datos de muestra cargados")
+            st.rerun()
+        except Exception as fallback_error:
+            st.error(f"❌ Error crítico: No se pueden cargar datos: {fallback_error}")
+
 
 def mostrar_entrada_datos():
     """Muestra la interfaz de entrada de datos - CON SCRAPING"""
@@ -371,44 +477,70 @@ def mostrar_entrada_datos():
         entrada_partidos_con_csv(st.session_state.partidos_revancha, 'revancha')
 
 def mostrar_estado_scraping():
-    """Muestra estado del sistema de scraping en la interfaz"""
-    if SCRAPING_CONFIG['enabled']:
-        scraper = ProgolScraper()
-        
-        if scraper.is_available():
-            with st.expander("🤖 Estado del Sistema de Scraping"):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
+    """Muestra estado del sistema de scraping en la interfaz - VERSIÓN ROBUSTA"""
+    scraper = ProgolScraper()
+    status = scraper.get_scraping_status()
+    
+    if status['enabled']:
+        with st.expander("🤖 Estado del Sistema de Scraping"):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if status['template_generator_ok'] or status['data_aggregator_ok']:
                     st.success("✅ Sistema Activo")
                     st.caption("Scraping disponible")
-                
-                with col2:
-                    ligas_disponibles = scraper.get_available_leagues()
-                    st.metric("Ligas Disponibles", len(ligas_disponibles))
-                
-                with col3:
-                    if st.button("🔄 Actualizar Datos", help="Obtiene datos frescos"):
-                        cargar_datos_automaticos()
-                
-                # Mostrar configuración actual
-                if SCRAPING_CONFIG['odds_api_key']:
-                    st.success("🔑 API comercial configurada")
                 else:
-                    st.info("💡 Sin API comercial - usando scraping directo")
-                
-                # Mostrar ligas disponibles
-                if ligas_disponibles:
-                    st.caption("**Ligas soportadas:**")
-                    st.caption(" • ".join([liga.replace('_', ' ').title() for liga in ligas_disponibles[:5]]))
+                    st.warning("⚠️ Sistema Parcial")
+                    st.caption("Algunos componentes fallan")
+            
+            with col2:
+                available_count = len(status['available_scrapers'])
+                st.metric("Scrapers Disponibles", available_count)
+                if available_count > 0:
+                    st.caption(f"Activos: {', '.join(status['available_scrapers'])}")
+            
+            with col3:
+                if st.button("🔄 Actualizar Datos", help="Obtiene datos frescos"):
+                    cargar_datos_automaticos()
+            
+            # Estado de componentes
+            col1, col2 = st.columns(2)
+            with col1:
+                if status['template_generator_ok']:
+                    st.success("✅ Template Generator")
+                else:
+                    st.error("❌ Template Generator")
+            
+            with col2:
+                if status['data_aggregator_ok']:
+                    st.success("✅ Data Aggregator")
+                else:
+                    st.error("❌ Data Aggregator")
+            
+            # Configuración de API
+            if status['has_api_key']:
+                st.success("🔑 API comercial configurada")
+            else:
+                st.info("💡 Sin API comercial - usando scraping directo")
+            
+            # Scrapers disponibles
+            if status['available_scrapers']:
+                st.caption("**Scrapers activos:**")
+                st.caption(" • ".join(status['available_scrapers']))
         
         scraper.close()
     else:
         with st.expander("⚠️ Sistema de Scraping No Disponible"):
-            st.warning("Para habilitar scraping automático:")
-            st.code("1. Crear carpeta 'scrapers/'")
-            st.code("2. Agregar módulos de scraping")
-            st.code("3. (Opcional) Configurar API keys en secrets")
+            if status['error_message']:
+                st.error(f"**Error:** {status['error_message']}")
+            
+            st.warning("**Para habilitar scraping automático:**")
+            st.code("1. Crear carpeta 'scrapers/' en el proyecto")
+            st.code("2. Agregar todos los módulos de scraping")
+            st.code("3. Instalar dependencias: selenium, beautifulsoup4, etc.")
+            st.code("4. (Opcional) Configurar API keys en secrets")
+            
+            st.info("**Estado actual:** La aplicación funciona normalmente con datos manuales y de muestra")
 
 def entrada_partidos_con_csv(partidos_list, tipo):
     """Interfaz para entrada de partidos con opción CSV"""
