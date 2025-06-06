@@ -34,6 +34,7 @@ except ImportError as e:
 # Configuración de scraping
 SCRAPING_CONFIG = {
 <<<<<<< HEAD
+<<<<<<< HEAD
     'odds_api_key': st.secrets.get("ODDS_API_KEY", None) if hasattr(st, 'secrets') else None,
     'enabled': False,
     'error_message': "Sistema de scraping no inicializado."
@@ -77,6 +78,15 @@ def get_data_aggregator():
     'enabled': False
 }
 
+=======
+    'odds_api_key': st.secrets.get("ODDS_API_KEY", None),
+    'rapid_api_key': st.secrets.get("RAPID_API_KEY", None),
+    'delay_range': (1, 3),
+    'timeout': 30,
+    'enabled': False
+}
+
+>>>>>>> parent of d1a432e (ok)
 # Intentar importar sistema de scraping
 try:
     # Agregar path del scraper
@@ -178,6 +188,9 @@ def get_progol_contest_scraper():
                 self.template_generator.close()
             if hasattr(self, 'data_aggregator'):
                 self.data_aggregator.close_all()
+<<<<<<< HEAD
+>>>>>>> parent of d1a432e (ok)
+=======
 >>>>>>> parent of d1a432e (ok)
 
 def main():
@@ -261,6 +274,7 @@ def configurar_sidebar():
 
 def cargar_datos_automaticos():
 <<<<<<< HEAD
+<<<<<<< HEAD
     """Carga datos automáticamente usando el nuevo flujo de scraping."""
     contest_scraper = get_progol_contest_scraper()
     data_aggregator = get_data_aggregator()
@@ -272,9 +286,15 @@ def cargar_datos_automaticos():
     if not SCRAPING_CONFIG['enabled']:
         st.error("❌ Sistema de scraping no disponible")
 >>>>>>> parent of d1a432e (ok)
+=======
+    """Carga datos automáticamente usando scraping"""
+    if not SCRAPING_CONFIG['enabled']:
+        st.error("❌ Sistema de scraping no disponible")
+>>>>>>> parent of d1a432e (ok)
         return
 
     try:
+<<<<<<< HEAD
 <<<<<<< HEAD
         with st.spinner("🔄 Obteniendo la quiniela oficial de Progol..."):
             partidos_regulares_nombres, partidos_revancha_nombres = contest_scraper.get_match_list()
@@ -290,6 +310,8 @@ def cargar_datos_automaticos():
                 st.session_state.partidos_regular = data_aggregator.get_details_for_match_list(partidos_regulares_nombres)
                 st.success(f"✅ {len(st.session_state.partidos_regular)} partidos regulares cargados con datos.")
 =======
+=======
+>>>>>>> parent of d1a432e (ok)
         scraper = ProgolScraper()
         
         if not scraper.is_available():
@@ -326,6 +348,7 @@ def cargar_datos_automaticos():
             st.rerun()
 >>>>>>> parent of d1a432e (ok)
             
+<<<<<<< HEAD
             if partidos_revancha_nombres:
                 st.session_state.partidos_revancha = data_aggregator.get_details_for_match_list(partidos_revancha_nombres)
                 st.success(f"✅ {len(st.session_state.partidos_revancha)} partidos de revancha cargados con datos.")
@@ -346,6 +369,9 @@ def mostrar_generacion(): st.header("Función 'mostrar_generacion' sin implement
 def mostrar_resultados(): st.header("Función 'mostrar_resultados' sin implementar en este bloque")
 def mostrar_exportacion(): st.header("Función 'mostrar_exportacion' sin implementar en este bloque")
 =======
+=======
+    except Exception as e:
+>>>>>>> parent of d1a432e (ok)
         st.error(f"❌ Error cargando datos automáticamente: {str(e)}")
         st.info("💡 Usando datos de muestra como fallback")
         sample_data = create_sample_data()
