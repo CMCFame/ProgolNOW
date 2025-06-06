@@ -1,41 +1,27 @@
+# Configuración de Streamlit para Progol Optimizer
+# Solo opciones válidas para versiones recientes de Streamlit
+
 [global]
-# Configuración global de Streamlit para Progol Optimizer
+# Configuración global
+developmentMode = false
 
-# Configuración del servidor
 [server]
-# Puerto para desarrollo local (Streamlit Cloud ignora esto)
+# Configuración del servidor
 port = 8501
+headless = true
 
-# Configuración de tema
 [theme]
 # Tema personalizado para la aplicación
-primaryColor = "#FF6B6B"        # Color principal (rojo/rosa para deportes)
-backgroundColor = "#FFFFFF"     # Fondo blanco
-secondaryBackgroundColor = "#F0F2F6"  # Fondo secundario gris claro
-textColor = "#262730"          # Texto principal oscuro
+primaryColor = "#FF6B6B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
 
-# Configuración del navegador
 [browser]
-# Configuración automática del navegador
-gatherUsageStats = false       # No enviar estadísticas de uso
-showErrorDetails = true        # Mostrar detalles de errores en desarrollo
+# Configuración del navegador
+gatherUsageStats = false
 
-# Configuración del cliente
-[client]
-# Configuración del comportamiento del cliente
-caching = true                 # Habilitar caching
-showErrorDetails = true        # Mostrar errores detallados
-toolbarMode = "auto"          # Mostrar toolbar automáticamente
-
-# Configuración del logger
 [logger]
-# Nivel de logging
-level = "info"                # Nivel de log: debug, info, warning, error
-messageFormat = "%(asctime)s %(message)s"  # Formato de mensajes
-
-# Configuración de desarrollo
-[runner]
-# Configuración del runner de Streamlit
-magicEnabled = true           # Habilitar "magic commands"
-installTracer = false         # No instalar tracer (para mejor performance)
-fixMatplotlib = true          # Arreglar problemas de matplotlib
+# Configuración de logging
+level = "info"
