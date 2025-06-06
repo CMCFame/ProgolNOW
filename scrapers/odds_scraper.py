@@ -5,7 +5,7 @@ Scraper para obtener odds de múltiples casas de apuestas
 
 import requests
 from .base_scraper import BaseScraper
-from typing import Dict, List
+from typing import Dict, List, Optional
 import json
 
 class OddsScraper(BaseScraper):
@@ -51,7 +51,6 @@ class OddsScraper(BaseScraper):
                 away_team = match['away_team']
                 commence_time = match['commence_time']
                 
-                # Obtener mejores odds disponibles
                 best_odds = self._get_best_odds(match['bookmakers'])
                 
                 if best_odds:
@@ -77,44 +76,29 @@ class OddsScraper(BaseScraper):
         if not bookmakers:
             return self._default_probabilities()
         
-        home_odds = []
-        draw_odds = []
-        away_odds = []
+        home_odds, draw_odds, away_odds = [], [], []
         
         for bookmaker in bookmakers:
-            markets = bookmaker.get('markets', [])
-            for market in markets:
+            for market in bookmaker.get('markets', []):
                 if market['key'] == 'h2h':
-                    outcomes = market['outcomes']
-                    for outcome in outcomes:
+                    for outcome in market['outcomes']:
                         if outcome['name'] == bookmaker.get('home_team', ''):
                             home_odds.append(outcome['price'])
                         elif outcome['name'] == bookmaker.get('away_team', ''):
                             away_odds.append(outcome['price'])
-                        else:  # Draw
+                        else:
                             draw_odds.append(outcome['price'])
         
         if home_odds and draw_odds and away_odds:
-            # Usar promedio de odds
-            avg_home_odd = sum(home_odds) / len(home_odds)
-            avg_draw_odd = sum(draw_odds) / len(draw_odds)
-            avg_away_odd = sum(away_odds) / len(away_odds)
-            
-            # Convertir a probabilidades
-            prob_home = 1 / avg_home_odd
-            prob_draw = 1 / avg_draw_odd
-            prob_away = 1 / avg_away_odd
-            
-            # Normalizar
+            prob_home = 1 / (sum(home_odds) / len(home_odds))
+            prob_draw = 1 / (sum(draw_odds) / len(draw_odds))
+            prob_away = 1 / (sum(away_odds) / len(away_odds))
             total = prob_home + prob_draw + prob_away
             
             return {
-                'prob_local': prob_home / total,
-                'prob_empate': prob_draw / total,
-                'prob_visitante': prob_away / total,
-                'es_final': False,
-                'forma_diferencia': 0,
-                'lesiones_impact': 0
+                'prob_local': prob_home / total, 'prob_empate': prob_draw / total,
+                'prob_visitante': prob_away / total, 'es_final': False,
+                'forma_diferencia': 0, 'lesiones_impact': 0
             }
         
         return self._default_probabilities()
@@ -122,17 +106,40 @@ class OddsScraper(BaseScraper):
     def scrape_matches(self, league: str, date_range=None) -> List[Dict]:
         """Implementa método abstracto"""
         sport_mapping = {
-            'premier_league': 'soccer_epl',
-            'la_liga': 'soccer_spain_la_liga',
-            'serie_a': 'soccer_italy_serie_a',
-            'bundesliga': 'soccer_germany_bundesliga',
-            'champions_league': 'soccer_uefa_champs_league',
-            'liga_mx': 'soccer_mexico_ligamx'
+            'premier_league': 'soccer_epl', 'la_liga': 'soccer_spain_la_liga',
+            'serie_a': 'soccer_italy_serie_a', 'bundesliga': 'soccer_germany_bundesliga',
+            'champions_league': 'soccer_uefa_champs_league', 'liga_mx': 'soccer_mexico_ligamx'
         }
-        
-        sport_key = sport_mapping.get(league.lower(), 'soccer_epl')
-        return self.get_odds_from_api(sport_key)
+        return self.get_odds_from_api(sport_mapping.get(league.lower(), 'soccer_epl'))
     
     def scrape_odds(self, match_id: str) -> Dict:
         """Implementa método abstracto"""
         return self._default_probabilities()
+
+    def find_specific_match(self, home_team: str, away_team: str) -> Optional[Dict]:
+        """
+        Busca un partido específico en The Odds API.
+        La API no busca por equipo, sino que devuelve listas por liga.
+        Buscamos en las ligas más comunes de Progol.
+        """
+        if not self.api_key:
+            self.logger.warning("No hay API Key para The Odds API.")
+            return None
+
+        leagues_to_check = [
+            'soccer_mexico_ligamx', 'soccer_epl', 'soccer_spain_la_liga',
+            'soccer_italy_serie_a', 'soccer_germany_bundesliga', 'soccer_france_ligue_one',
+            'soccer_uefa_champs_league', 'soccer_uefa_europa_league', 'soccer_brazil_campeonato'
+        ]
+
+        for league in leagues_to_check:
+            self.logger.info(f"Buscando en '{league}' por '{home_team} vs {away_team}'")
+            api_matches = self.get_odds_from_api(league)
+            for match in api_matches:
+                if (home_team.lower() in match.get('local', '').lower() and
+                    away_team.lower() in match.get('visitante', '').lower()):
+                    self.logger.info(f"¡Encontrado! {home_team} vs {away_team}")
+                    return match
+        
+        self.logger.warning(f"No se encontró el partido '{home_team} vs {away_team}' en The Odds API.")
+        return None

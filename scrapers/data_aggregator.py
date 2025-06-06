@@ -1,154 +1,112 @@
 # scrapers/data_aggregator.py
 """
-Agregador de datos de múltiples fuentes
+Agregador de datos de múltiples fuentes para partidos específicos de Progol.
 """
 
 from typing import List, Dict, Optional
-from .flashscore_scraper import FlashscoreScraper
-from .odds_scraper import OddsScraper
 import logging
-from datetime import datetime
+import re
+
+# Importación segura de los scrapers que usará
+try:
+    from .flashscore_scraper import FlashscoreScraper
+except ImportError:
+    FlashscoreScraper = None
+try:
+    from .sofascore_scrapper import SofascoreScraper
+except ImportError:
+    SofascoreScraper = None
+try:
+    from .odds_scraper import OddsScraper
+except ImportError:
+    OddsScraper = None
+
 
 class DataAggregator:
-    """Agrega datos de múltiples scrapers"""
+    """Agrega datos para una lista predefinida de partidos."""
     
     def __init__(self, odds_api_key: Optional[str] = None):
         self.logger = self._setup_logging()
         
-        # Inicializar scrapers
-        self.scrapers = {
-            'flashscore': FlashscoreScraper(),
-            'odds_api': OddsScraper(api_key=odds_api_key) if odds_api_key else None
-        }
+        # Inicializar scrapers disponibles
+        self.scrapers = {}
+        if OddsScraper:
+            self.scrapers['odds_api'] = OddsScraper(api_key=odds_api_key)
+        if FlashscoreScraper:
+            self.scrapers['flashscore'] = FlashscoreScraper()
+        if SofascoreScraper:
+             self.scrapers['sofascore'] = SofascoreScraper()
         
-        self.logger.info("DataAggregator inicializado")
+        # Prioridad de las fuentes
+        self.source_priority = ['odds_api', 'sofascore', 'flashscore']
+
+        self.logger.info(f"DataAggregator inicializado con fuentes: {list(self.scrapers.keys())}")
     
     def _setup_logging(self):
         """Configura logging"""
         logger = logging.getLogger(self.__class__.__name__)
         logger.setLevel(logging.INFO)
-        
         if not logger.handlers:
             handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             logger.addHandler(handler)
-        
         return logger
-    
-    def get_matches(self, league: str, target_count: int = 14, 
-                   preferred_sources: List[str] = None) -> List[Dict]:
+
+    def get_details_for_match_list(self, match_list: List[Dict]) -> List[Dict]:
         """
-        Obtiene partidos de múltiples fuentes
+        Busca datos detallados para una lista de partidos predefinida.
         
         Args:
-            league: Liga a buscar
-            target_count: Número objetivo de partidos
-            preferred_sources: Fuentes preferidas en orden
-        
+            match_list: Lista de partidos, cada uno un dict con {'local': str, 'visitante': str}
+            
         Returns:
-            Lista de partidos agregados
+            Lista de partidos con datos enriquecidos (probabilidades, etc.).
         """
-        if preferred_sources is None:
-            preferred_sources = ['odds_api', 'flashscore']
+        detailed_matches = []
         
-        all_matches = []
-        
-        for source in preferred_sources:
-            if source not in self.scrapers or not self.scrapers[source]:
-                continue
+        for match_to_find in match_list:
+            local_team = match_to_find['local']
+            away_team = match_to_find['visitante']
             
-            try:
-                self.logger.info(f"Obteniendo datos de {source} para {league}")
-                scraper = self.scrapers[source]
-                matches = scraper.scrape_matches(league)
-                
-                if matches:
-                    self.logger.info(f"Obtenidos {len(matches)} partidos de {source}")
-                    all_matches.extend(matches)
-                    
-                    # Si ya tenemos suficientes partidos, detener
-                    if len(all_matches) >= target_count:
-                        break
-                
-            except Exception as e:
-                self.logger.error(f"Error obteniendo datos de {source}: {e}")
-                continue
-        
-        # Limpiar y deduplicar
-        cleaned_matches = self._clean_and_deduplicate(all_matches)
-        
-        # Limitar al número objetivo
-        final_matches = cleaned_matches[:target_count]
-        
-        self.logger.info(f"Retornando {len(final_matches)} partidos para {league}")
-        return final_matches
-    
-    def _clean_and_deduplicate(self, matches: List[Dict]) -> List[Dict]:
-        """Limpia y elimina duplicados"""
-        seen_matches = set()
-        clean_matches = []
-        
-        for match in matches:
-            # Crear clave única basada en equipos
-            key = f"{match['local'].lower().strip()}_vs_{match['visitante'].lower().strip()}"
+            self.logger.info(f"Buscando detalles para: {local_team} vs {away_team}")
             
-            if key not in seen_matches:
-                # Limpiar nombres de equipos
-                match['local'] = self._clean_team_name(match['local'])
-                match['visitante'] = self._clean_team_name(match['visitante'])
-                
-                # Validar probabilidades
-                if self._validate_probabilities(match):
-                    seen_matches.add(key)
-                    clean_matches.append(match)
-        
-        return clean_matches
-    
-    def _clean_team_name(self, name: str) -> str:
-        """Limpia nombres de equipos"""
-        # Remover caracteres especiales y espacios extra
-        cleaned = name.strip()
-        
-        # Mapeo de nombres comunes
-        name_mapping = {
-            'Manchester United': 'Manchester United',
-            'Man United': 'Manchester United',
-            'Man Utd': 'Manchester United',
-            'Manchester City': 'Manchester City',
-            'Man City': 'Manchester City',
-            'Real Madrid': 'Real Madrid',
-            'Barcelona': 'Barcelona',
-            'FC Barcelona': 'Barcelona',
-        }
-        
-        return name_mapping.get(cleaned, cleaned)
-    
-    def _validate_probabilities(self, match: Dict) -> bool:
-        """Valida que las probabilidades sean válidas"""
-        required_probs = ['prob_local', 'prob_empate', 'prob_visitante']
-        
-        for prob_key in required_probs:
-            if prob_key not in match:
-                return False
+            found_match_data = None
             
-            prob = match[prob_key]
-            if not isinstance(prob, (int, float)) or not (0 <= prob <= 1):
-                return False
-        
-        # Verificar que sumen aproximadamente 1
-        total = sum(match[key] for key in required_probs)
-        if abs(total - 1.0) > 0.1:
-            return False
-        
-        return True
-    
+            # Iterar sobre las fuentes de datos por prioridad
+            for source_name in self.source_priority:
+                if source_name in self.scrapers:
+                    scraper = self.scrapers[source_name]
+                    if scraper and hasattr(scraper, 'find_specific_match'):
+                        try:
+                            match_data = scraper.find_specific_match(local_team, away_team)
+                            if match_data:
+                                self.logger.info(f"Partido encontrado en '{source_name}'.")
+                                found_match_data = match_data
+                                break  # Encontrado, pasar al siguiente partido
+                        except Exception as e:
+                            self.logger.warning(f"Error buscando '{local_team} vs {away_team}' en {source_name}: {e}")
+            
+            if found_match_data:
+                detailed_matches.append(found_match_data)
+            else:
+                # Si no se encontró en ninguna fuente, agregar con datos de fallback
+                self.logger.warning(f"No se encontraron datos para '{local_team} vs {away_team}'. Usando fallback.")
+                detailed_matches.append({
+                    'local': local_team,
+                    'visitante': away_team,
+                    'prob_local': 0.34, 'prob_empate': 0.33, 'prob_visitante': 0.33,
+                    'es_final': False, 'forma_diferencia': 0, 'lesiones_impact': 0
+                })
+
+        return detailed_matches
+
     def close_all(self):
-        """Cierra todos los scrapers"""
-        for scraper in self.scrapers.values():
+        """Cierra todos los scrapers que lo necesiten."""
+        for scraper_name, scraper in self.scrapers.items():
             if scraper and hasattr(scraper, 'close'):
-                scraper.close()
-        
-        self.logger.info("Todos los scrapers cerrados")
+                try:
+                    scraper.close()
+                    self.logger.info(f"Scraper '{scraper_name}' cerrado.")
+                except Exception as e:
+                    self.logger.warning(f"Error cerrando scraper '{scraper_name}': {e}")
