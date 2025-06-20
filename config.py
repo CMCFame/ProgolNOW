@@ -1,5 +1,5 @@
 """
-Configuración principal para Progol Optimizer
+Configuración principal para Progol Optimizer x
 Parámetros centralizados de la metodología definitiva
 """
 
